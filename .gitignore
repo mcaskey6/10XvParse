@@ -1,0 +1,10 @@
+*.ec
+*.json
+*.DS_Store
+*.txt
+*.bus
+*.h5ad
+*.mtx
+*.fastq.gz
+*.fastq
+*.idx
