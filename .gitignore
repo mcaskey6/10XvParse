@@ -8,3 +8,5 @@
 *.fastq.gz
 *.fastq
 *.idx
+*.cells
+*.barcodes
