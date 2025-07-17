@@ -11,3 +11,4 @@
 *.cells
 *.barcodes
 *.swp
+!**/parse_extraction/**
