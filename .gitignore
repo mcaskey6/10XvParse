@@ -1,6 +1,5 @@
 *.ec
 *.json
-*.DS_Store
 *.txt
 *.bus
 *.h5ad
@@ -12,3 +11,4 @@
 *.barcodes
 *.swp
 !**/parse_extraction/**
+*.DS_Store
