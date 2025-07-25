@@ -1,4 +1,4 @@
-@extract <FASTA/barcodes/barcode_correct{*}>
+@extract <run_info/barcode_correct{*}>
 tags	distances	ids	groups	minFindsG	locations
 parse_extraction/r1_R.txt$   1          r1_R    round1    1          1,78,86
 parse_extraction/r1_T.txt$   1          r1_T    round1    1          1,78,86
