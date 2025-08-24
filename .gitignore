@@ -13,4 +13,5 @@
 *.barcodes
 *.swp
 !**/parse_extraction/**
+!**/SRA_accession/**
 *.DS_Store
