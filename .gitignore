@@ -5,7 +5,9 @@
 *.h5ad
 *.mtx
 *.fastq.gz
+*.fasta.gz
 *.fastq
+*.fasta
 *.idx
 *.cells
 *.barcodes
