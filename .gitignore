@@ -1,4 +1,6 @@
 *.ec
+*.tar.gz
+*.tar
 *.json
 *.txt
 *.bus
