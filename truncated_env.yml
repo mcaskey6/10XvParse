@@ -1,0 +1,19 @@
+name: 10XvParse
+channels:
+  - defaults
+dependencies:
+  - python=3.12
+  - sra-tools=3.0.3
+  - splitcode=0.30.0
+  - kb-python=0.29.3
+  - pybiomart
+  - scrublet
+  - star
+  - ipykernel
+  - samtools
+  - ncurses
+  - rseqc
+  - bedops
+  - gffread
+  - zlib
+  - bustools
