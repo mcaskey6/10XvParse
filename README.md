@@ -20,3 +20,5 @@ Datasets (find [here](https://www.ncbi.nlm.nih.gov/sra?term=SRP469371)):
 - GSM7873659-74: Parse WT, Homo sapiens
 - GSM7873657-8: 10x Genomics, Homo sapiens
 
+## Analysis 4
+Parse 8cube kidney data from first Illumina NovaSeq run; Mus musculus
