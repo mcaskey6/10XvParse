@@ -1,4 +1,4 @@
-# A Comparison of Split-Seq (Parse Biosciences) to Drop-seq (10x Genomics)
+# A Comparison of Parse Biosciences Evercode WT (Split-seq) to 10x Genomics Chromium
 ## Analysis 1
 From the paper: [Comparative transcriptomic analyses of thymocytes using 10x Genomics and Parse scRNA-seq technologies - BMC Genomics](https://link.springer.com/article/10.1186/s12864-024-10976-x)
 
@@ -22,3 +22,4 @@ Datasets (find [here](https://www.ncbi.nlm.nih.gov/sra?term=SRP469371)):
 
 ## Analysis 4
 Parse 8cube kidney data from first Illumina NovaSeq run; Mus musculus
+
