@@ -1,0 +1,68 @@
+name: Analysis_2
+
+SRA:
+ 10x:
+ - SRR27585866
+ - SRR27585867
+ - SRR27585872
+ - SRR27585873
+ - SRR27585874
+ 10x_hashtags:
+ - SRR27585893
+ parse:
+ - SRR27585888
+ - SRR27585889
+ - SRR27585894
+ - SRR27585895
+ - SRR27585896
+ - SRR27585890
+ - SRR27585891
+ - SRR27585892
+ - SRR27585886
+ - SRR27585887
+ - SRR27585883
+ - SRR27585884
+ - SRR27585885
+ - SRR27585870
+ - SRR27585871
+ - SRR27585880
+ - SRR27585878
+ - SRR27585879
+ - SRR27585881
+ - SRR27585882
+ - SRR27585877
+ parse_mini:
+ - SRR27585865
+ - SRR27585868
+ - SRR27585869
+ - SRR27585864
+ - SRR27585875
+ - SRR27585876
+
+# The suffix for the R1 and R2 FASTA files dumped from fasterq-dump. For some reason these change across datasets
+read_num:
+  10x:
+    R1: 3
+    R2: 4
+  10x_hashtags:
+    R1: 3
+    R2: 4
+  parse:
+    R1: 1
+    R2: 2
+  parse_mini:
+    R1: 1
+    R2: 2
+
+# Files to generate the kallisto index
+reference:
+ species: mouse
+ fasta: https://ftp.ensembl.org/pub/release-115/fasta/mus_musculus/dna/Mus_musculus.GRCm39.dna.primary_assembly.fa.gz
+ gtf: https://ftp.ensembl.org/pub/release-115/gtf/mus_musculus/Mus_musculus.GRCm39.115.gtf.gz
+
+# The kb-python technology strings
+tech:
+ 10x: 10XV3
+ 10x_hashtags: 10XV3
+ parse: "1,10,18,1,48,56,1,78,86:1,0,10:0,0,0"
+ parse_mini: "1,10,18,1,48,56,1,78,86:1,0,10:0,0,0"

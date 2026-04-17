@@ -1,4 +1,4 @@
-# A Comparison of Parse Biosciences Evercode WT (Split-seq) to 10x Genomics Chromium
+# A Comparison of Parse Biosciences Evercode WT to 10x Genomics Chromium
 ## Analysis 1
 From the paper: [Comparative transcriptomic analyses of thymocytes using 10x Genomics and Parse scRNA-seq technologies - BMC Genomics](https://link.springer.com/article/10.1186/s12864-024-10976-x)
 
