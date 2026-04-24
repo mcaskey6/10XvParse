@@ -1,1 +1,5 @@
 nohup: ignoring input
+Traceback (most recent call last):
+  File "/home/mcaskey/10XvParse/Scripts/analysis2.py", line 4, in <module>
+    from XvP_utils.fasta_utils import load10X, loadParse, load10xHashtags, subsampleParse, subsample10X
+ModuleNotFoundError: No module named 'XvP_utils'

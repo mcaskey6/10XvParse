@@ -109,7 +109,7 @@ def subsampleParse(settings: RunSettings, config_file:str, assay:str) -> None:
     if not sampled_randO_exist or settings.overwrite:
         # subsample randO FastQs
         utils.subsample_fastqs(
-            fastq_files=paths.polyT_files,
+            fastq_files=paths.randO_files,
             output_files=paths.sampled_randO_files,
             num_reads=settings.subsample_num,
             threads=settings.threads,

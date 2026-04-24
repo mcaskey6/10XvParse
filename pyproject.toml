@@ -16,7 +16,8 @@ dependencies = [
     "scrublet",
     "scanpy",
     "pybiomart",
-    "scipy"
+    "scipy",
+    "upsetty"
 ]
 
 [tool.setuptools.packages.find]
