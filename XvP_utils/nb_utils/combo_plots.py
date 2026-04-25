@@ -357,8 +357,8 @@ def compare(datasets, lim):
     for pair in comparisons:
         compare_dfs.append(processing.compare_genes(pair[0],pair[1]))
     
-    #compareByDensity(compare_dfs, comparisons, lim)
-    #compareByCooks(compare_dfs, comparisons, lim)
+    compareByDensity(compare_dfs, comparisons, lim)
+    compareByCooks(compare_dfs, comparisons, lim)
     compareByLength(compare_dfs, comparisons, lim)
     compareByGC(compare_dfs, comparisons, lim)
     compareByType(compare_dfs, comparisons, lim)

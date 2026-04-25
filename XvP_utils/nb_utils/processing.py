@@ -293,7 +293,7 @@ def compare_genes(data_x, data_y):
 
     #calculate point density
     xy = np.vstack([shared_data['percent_counts_x'].to_numpy().flatten(), shared_data['percent_counts_y'].to_numpy().flatten()])
-    #shared_data['point_density'] = gaussian_kde(xy)(xy)
+    shared_data['point_density'] = gaussian_kde(xy)(xy)
 
     return shared_data
 

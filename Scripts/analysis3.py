@@ -34,5 +34,5 @@ if __name__ == "__main__":
     config_file = settings.root_dir / "Configs" / settings.config_name
 
     # Run the pipeline
-    loadAll(settings, config_file)
-    subsampleAll(settings, config_file)
+    subsampleParse(settings, config_file, "parse_H1")
+    subsampleParse(settings, config_file, "parse_H2")
