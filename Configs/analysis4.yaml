@@ -1,0 +1,29 @@
+name: Analysis_4
+
+ERA:
+  10x:
+    - ERR12398015
+  parse:
+    - ERR12167397
+    - ERR12167398
+
+# ENA files arrive as _1.fastq.gz / _2.fastq.gz
+read_num:
+  10x:
+    R1: 1
+    R2: 2
+  parse:
+    R1: 1
+    R2: 2
+
+# Barnyard (human + mouse) reference. Human genes will be prefixed HUMAN_, mouse MOUSE_.
+reference:
+  species: human_mouse
+  human_fasta: https://ftp.ensembl.org/pub/release-112/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+  mouse_fasta: https://ftp.ensembl.org/pub/release-115/fasta/mus_musculus/dna/Mus_musculus.GRCm39.dna.primary_assembly.fa.gz
+  human_gtf: https://ftp.ensembl.org/pub/release-112/gtf/homo_sapiens/Homo_sapiens.GRCh38.112.gtf.gz
+  mouse_gtf: https://ftp.ensembl.org/pub/release-115/gtf/mus_musculus/Mus_musculus.GRCm39.115.gtf.gz
+
+tech:
+  10x: 10XV3
+  parse: "1,10,18,1,48,56,1,78,86:1,0,10:0,0,0"
