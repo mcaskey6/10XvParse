@@ -1,0 +1,33 @@
+name: Analysis_5
+
+SRA:
+ 10x_1:
+ - SRR26594154
+ 10x_2:
+ - SRR26594153
+ parse:
+ - SRR28867558	
+
+# The suffix for the R1 and R2 FASTA files dumped from fasterq-dump. For some reason these change across datasets
+read_num:
+  10x_1:
+    R1: 1
+    R2: 2
+  10x_2:
+    R1: 1
+    R2: 2
+  parse:
+    R1: 1
+    R2: 2
+
+# Files to generate the kallisto index
+reference:
+ species: human
+ fasta: https://ftp.ensembl.org/pub/release-115/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+ gtf: https://ftp.ensembl.org/pub/release-115/gtf/homo_sapiens/Homo_sapiens.GRCh38.115.gtf.gz
+
+# The kb-python technology strings
+tech:
+ 10x_1: 10XV3
+ 10x_2: 10XV3
+ parse: "1,10,18,1,48,56,1,78,86:1,0,10:0,0,0"
