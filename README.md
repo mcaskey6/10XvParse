@@ -6,7 +6,9 @@ This repository reproduces and compares published single-cell RNA-seq datasets g
 
 ```
 10XvParse/
-├── Configs/          # Per-analysis YAML config files (SRA accessions, reference URLs, technology strings)
+├── Configs/              # Per-analysis YAML config files and assay-specific reference data
+│   ├── parse_info/       # Parse kit barcode reference (kits_info.txt + barcodes/*.csv)
+│   └── Analysis_N/       # Per-assay config dirs (auto-generated Parse files + static 10X files)
 ├── Data/             # Downloaded FASTQs, pseudoalignment outputs, and H5AD files (gitignored)
 ├── Index/            # kallisto indices, organized by species
 ├── Logs/             # Log files from preprocessing runs
@@ -16,6 +18,20 @@ This repository reproduces and compares published single-cell RNA-seq datasets g
     ├── preprocessing/ # Download, subsampling, pseudoalignment pipelines
     └── plotting/      # Plotting helpers for comparison figures
 ```
+
+### Parse barcode config files are auto-generated
+
+For each Parse assay the pipeline automatically generates the following files in `Configs/Analysis_N/<assay_name>/` at run time, derived from the kit name and optional well list in the YAML:
+
+| File | Contents |
+|------|----------|
+| `r1_R.txt` | Round 1 randO primer barcode sequences for the selected wells (used by splitcode) |
+| `r1_T.txt` | Round 1 polyT primer barcode sequences for the selected wells (used by splitcode) |
+| `onlist.txt` | Per-round barcode whitelist for kb-python error correction |
+| `replace.txt` | Maps randO bc1 sequences to their polyT counterparts for kb-python |
+| `bcs_to_wells.txt` | Mapping from all bc1 sequences to well positions (used in analysis notebooks) |
+
+The source of truth for all barcode sequences is `Configs/parse_info/` — `kits_info.txt` lists the barcode files for each kit version, and `barcodes/*.csv` contains the sequences. The pipeline also writes `config_RT_parse.txt`, `parse_keep.txt`, and `randOpolyT_keep.txt` into the same subdirectory at run time.
 
 ## Environment Setup
 
@@ -41,6 +57,8 @@ python Scripts/analysis2.py   # Thymocyte dataset (mouse)
 python Scripts/analysis3.py   # PBMC dataset (human)
 python Scripts/analysis4.py   # K562/mESC barnyard dataset
 python Scripts/analysis5.py   # Frozen PBMC dataset (human)
+python Scripts/analysis6.py   # Cancer Cell Perturbation dataset (human)
+python Scripts/analysis7.py   # PBMC dataset (human)
 ```
 
 Downstream exploration is done in the corresponding Jupyter notebooks under `Notebooks/`.
@@ -87,6 +105,28 @@ Datasets (find [here](https://www.ncbi.nlm.nih.gov/sra?term=SRP484103)):
 - SRR28867558: Parse Evercode WT v2
 - SRR28867563 and SRR28867562: 10x Next Gem v3, technical replicates 1 and 2
 
+### Analysis 6
+From: [Comparison of high-throughput single-cell RNA-seq methods for ex vivo drug screening](https://academic.oup.com/nargab/article/6/1/lqae001/7591100?login=true#460158720)
+
+Sample: *Homo sapiens* glucocorticoid-resistant E/R+ ALL Reh cell line multiplexed according to drug treatment (6 total perturbation experiments)
+
+Datasets (find [here](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE229617))
+- SRR24154339: 10X Next Gem v3
+- SRR24154340: Multi-seq barcodes
+- SRR24154341-2: Parse Evercode mini v1 replicate 1 and 2
+
+### Analysis 7
+From: Comparative analysis of multiplex single-cell mRNA sequencing of resting and activated 
+PBMCs using droplet-based and split-pool methods (Yet to be published)
+
+Sample: frozen *Homo sapiens* PBMCs
+
+Datasets:
+10x: AZ13332/AZ_cDNA_S1_L002; 10X Chromium v4
+10x_hashtags: LMO/RPI7_S0_L001; 10X Multi-Seq
+parse: AZ12601/AZ_PS_5k_S5_L002 and AZ12601/AZ_PS_10k_S6_L002; Parse Evercode mini v3
+
+
 ## Adding a New Dataset
 
 Follow these steps to add a new analysis:
@@ -105,7 +145,7 @@ SRA:
   parse:
     - SRR_XXXXXXX
 
-# R1/R2 file suffixes produced by fasterq-dump (these vary across datasets — check with getReadNum.out)
+# R1/R2 file suffixes produced by fasterq-dump. This varies across datasets depending upon whether or not Illumina sample indices were indexed and in what order they were saved to SRA.
 read_num:
   10x:
     R1: 1
@@ -120,29 +160,22 @@ reference:
   fasta: https://ftp.ensembl.org/pub/release-115/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
   gtf: https://ftp.ensembl.org/pub/release-115/gtf/homo_sapiens/Homo_sapiens.GRCh38.115.gtf.gz
 
-# kb-python technology strings
+# kb-python technology strings for 10X assays; Parse kit name for Parse assays
 tech:
   10x: 10XV3
-  parse: "1,10,18,1,48,56,1,78,86:1,0,10:0,0,0"
+  parse: WT_v2
+
+# Optional: restrict Parse splitcode filtering to a subset of wells.
+# If omitted, all wells in the kit are used.
+ wells:
+  parse: [A1, A2, A3]
 ```
+
+For Parse assays, the `tech` value must be a kit name of the form `<kit>_v<chem>` (e.g. `WT_v2`, `WT_mini_v3`). The pipeline looks this up in `Configs/parse_info/kits_info.txt` to obtain the kb-python technology x-string and the correct barcode files, then auto-generates all required splitcode/kb-python config files before running.
 
 Use `ERA` instead of `SRA` for European Nucleotide Archive accessions. For barnyard (dual-species) experiments, provide both a human and mouse `fasta`/`gtf` — see `analysis4.yaml` for the pattern.
 
-### 2. Add Parse barcode config files
-
-For each Parse assay in the config, create a subdirectory `Configs/Analysis_N/<assay_name>/` and place the following five static files there. These files are specific to the Parse kit version (e.g. v2 vs. v3) and the demultiplexing strategy (e.g all vs. subset of wells used for sample) — copy them from an existing analysis that used the same kit version:
-
-| File | Contents |
-|------|----------|
-| `r1_R.txt` | Round 1 Random primer barcode sequences used by splitcode to demultiplex by well |
-| `r1_T.txt` | Round 1 PolyT primer barcode sequences used by splitcode to demultiplex by well |
-| `onlist.txt` | Barcode whitelist with allowed sequences and error-correction targets |
-| `replace.txt` | Barcode replacement table mapping raw barcodes to corrected sequences |
-| `bcs_to_wells.txt` | Mapping from barcode sequences to well positions |
-
-The pipeline also writes generated files (`config_RT_parse.txt`, `parse_keep.txt`, `randOpolyT_keep.txt`) into the same subdirectory at run time — these do not need to be created manually.
-
-### 3. Write a script
+### 2. Write a script
 
 Create `Scripts/analysisN.py` based on an existing script. At minimum, call `load_10x` and `load_parse` (and `subsample_*` variants if you want depth-matched comparisons):
 
@@ -178,7 +211,7 @@ if __name__ == "__main__":
     subsample_parse(settings, config_file, "parse", subsample_num, logger)
 ```
 
-### 4. Run the script
+### 3. Run the script
 
 ```bash
 python Scripts/analysisN.py
@@ -186,10 +219,10 @@ python Scripts/analysisN.py
 
 kb python outputs with `.h5ad` files will be written to `Data/Analysis_N/{assat}/kb_python`. Logs go to `Logs/analysisN.txt`.
 
-### 5. Add a notebook
+### 4. Add a notebook
 
 Create a directory `Notebooks/Analysis_N/` and add a Jupyter notebook for downstream analysis and figures, following the pattern in `Notebooks/Analysis_2/` or `Notebooks/Analysis_3/`.
 
-### 6. Update this README
+### 5. Update this README
 
 Add an entry for the new dataset under the **Datasets** section above, including the paper link, sample description, and accession numbers.

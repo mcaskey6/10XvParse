@@ -22,6 +22,7 @@ class RunSettings:
     root_dir: Path              # The project directory
     config_name: str            # Filename with the config file for the analysis to be run
     overwrite: bool = False     # Whether or not to re-download FASTA files and rerun splitcode
+    run_kb: bool = True         # Whether or not to run kb-python pseudoalignment
     threads: int = 8            # Number of threads to pass to commands (splitcode, kb_python, etc.)
     max_workers: int = 2        # Number of workers to use for parallel steps in the pipeline.
 
@@ -43,6 +44,11 @@ class AnalysisConfig:
     gtf_url: str = ""
     genome_url_2: str = ""
     gtf_url_2: str = ""
+    # Optional R2 trim length (bp) — used for feature barcode libraries where long reads
+    # cause downstream k-mers to collide with kite index entries from other barcodes
+    r2_trim_length: int | None = None
+    # Optional well subset for Parse kits — empty list means use all wells
+    wells: list[str] = field(default_factory=list)
 
     @property
     def is_barnyard(self) -> bool:
@@ -70,6 +76,8 @@ class AnalysisConfig:
             gtf_url_2=ref.get("mouse_gtf", ""),
             species=ref["species"],
             technology=raw["tech"][assay],
+            r2_trim_length=raw.get("trim", {}).get(assay),
+            wells=raw.get("tech", {}).get("wells", {}).get(assay, []),
         )
 
 
@@ -79,6 +87,7 @@ class BasePaths:
     # Config paths
     config_dir: Path
     config_file: Path
+    parse_info_dir: Path
 
     # Data paths
     outdir: Path
@@ -113,6 +122,7 @@ class BasePaths:
         return cls(
             config_dir=config_dir,
             config_file=config_file,
+            parse_info_dir=config_dir / "parse_info",
             outdir=outdir,
             fasta_dir=fasta_dir,
             dumped_dir=fasta_dir / "Dumped",

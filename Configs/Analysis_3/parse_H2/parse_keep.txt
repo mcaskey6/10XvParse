@@ -1,1 +1,0 @@
-round1 /home/mcaskey/10XvParse/Data/Analysis_3/parse_H2/FASTA/Processed/parse_H2

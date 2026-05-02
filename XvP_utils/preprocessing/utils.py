@@ -104,8 +104,8 @@ def dump_sra(
     )
 
     logger.debug("Zipping %s read 1 and read 2", library.name)
-    io.run_command(["pigz", str(library.read1_fasta), "-p", str(threads)], logger)
-    io.run_command(["pigz", str(library.read2_fasta), "-p", str(threads)], logger)
+    io.run_command(["pigz", "-f", str(library.read1_fasta), "-p", str(threads)], logger)
+    io.run_command(["pigz", "-f", str(library.read2_fasta), "-p", str(threads)], logger)
 
 
 def multiplex_fastqs(
@@ -249,6 +249,42 @@ def pseudoalign_10x(
     )
 
 
+def _trim_r2(fastq_r2: Path, trim_length: int, threads: int, logger: logging.Logger) -> Path:
+    '''Trim R2 FASTQ to trim_length bases with seqtk, writing compressed output alongside the input.'''
+    trimmed = fastq_r2.parent / fastq_r2.name.replace(".fastq.gz", "_trimmed.fastq.gz")
+    logger.info("Trimming R2 to %d bp -> %s", trim_length, trimmed)
+
+    with open(trimmed, "wb") as out_f:
+        seqtk = subprocess.Popen(
+            ["seqtk", "trimfq", "-L", str(trim_length), str(fastq_r2)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        pigz = subprocess.Popen(
+            ["pigz", "-p", str(threads)],
+            stdin=seqtk.stdout,
+            stdout=out_f,
+            stderr=subprocess.PIPE,
+        )
+        assert seqtk.stdout is not None
+        seqtk.stdout.close()
+        pigz_stderr = pigz.stderr.read().decode() if pigz.stderr else ""
+        pigz_rc = pigz.wait()
+        seqtk_stderr = seqtk.stderr.read().decode() if seqtk.stderr else ""
+        seqtk_rc = seqtk.wait()
+
+    if seqtk_stderr:
+        logger.error(seqtk_stderr)
+    if pigz_stderr:
+        logger.error(pigz_stderr)
+    if seqtk_rc != 0:
+        raise subprocess.CalledProcessError(seqtk_rc, seqtk.args)
+    if pigz_rc != 0:
+        raise subprocess.CalledProcessError(pigz_rc, pigz.args)
+
+    return trimmed
+
+
 def pseudoalign_10x_hashtags(
     paths: HashtagsPaths,
     fastq_files: list[Path],
@@ -256,6 +292,7 @@ def pseudoalign_10x_hashtags(
     tech: str,
     threads: int,
     logger: logging.Logger,
+    trim_length: int | None = None,
 ) -> None:
     '''Psuedoalign multiplexed files to reference. Build index if needed'''
 
@@ -274,6 +311,10 @@ def pseudoalign_10x_hashtags(
         logger,
     )
 
+    r2 = fastq_files[1]
+    if trim_length is not None:
+        r2 = _trim_r2(fastq_files[1], trim_length, threads, logger)
+
     logger.info("Pseudoaligning 10X Hashtag multiplexed reads to genome index")
     io.run_command(
         [
@@ -288,7 +329,7 @@ def pseudoalign_10x_hashtags(
             "-x", tech,
             "-o", str(kb_out_dir),
             str(fastq_files[0]),
-            str(fastq_files[1]),
+            str(r2),
         ],
         logger,
     )
@@ -556,6 +597,27 @@ def era_core_pipeline(
         else:
             logger.info("Files for %s already downloaded. Skipping.", err)
 
+    _multiplex_into_fastq(settings, paths, libraries, logger)
+
+
+def local_pipeline(
+    settings: RunSettings,
+    paths: BasePaths,
+    config: AnalysisConfig,
+    assay: str,
+    logger: logging.Logger,
+) -> None:
+    '''Use pre-existing FASTQ files from dumped_dir when no SRA/ERA accessions are provided.'''
+    logger.info("No accessions in config for %s — checking for local files in %s", assay, paths.dumped_dir)
+    libraries = io.build_local_libraries(config, paths)
+    if not libraries:
+        raise FileNotFoundError(
+            f"No SRA/ERA accessions in config and no local files found in {paths.dumped_dir}. "
+            f"Expected files named Lib0_{config.r1_num}.fastq.gz / Lib0_{config.r2_num}.fastq.gz, etc."
+        )
+    missing = [p for lib in libraries for p in lib.gz_files if not p.is_file()]
+    if missing:
+        raise FileNotFoundError(f"Local library files missing: {missing}")
     _multiplex_into_fastq(settings, paths, libraries, logger)
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from .classes import RunSettings, AnalysisConfig, TenXPaths, HashtagsPaths, ParsePaths
-from . import utils
+from . import utils, parse_config
 
 
 def _download_reference(settings: RunSettings, paths: TenXPaths, config: AnalysisConfig, logger: logging.Logger) -> None:
@@ -19,11 +19,13 @@ def _download_reference(settings: RunSettings, paths: TenXPaths, config: Analysi
 
 
 def _run_core_pipeline(settings: RunSettings, paths, config: AnalysisConfig, assay: str, logger: logging.Logger) -> None:
-    '''Route to ERA or SRA download pipeline based on what accessions the config provides.'''
+    '''Route to ERA, SRA, or local-files pipeline based on what accessions the config provides.'''
     if config.era:
         utils.era_core_pipeline(settings, paths, config, assay, logger)
-    else:
+    elif config.sra:
         utils.core_pipeline(settings, paths, config, assay, logger)
+    else:
+        utils.local_pipeline(settings, paths, config, assay, logger)
 
 
 def load_10x(settings: RunSettings, config_file: str, assay: str, logger: logging.Logger) -> None:
@@ -35,14 +37,15 @@ def load_10x(settings: RunSettings, config_file: str, assay: str, logger: loggin
     _download_reference(settings, paths, config, logger)
     _run_core_pipeline(settings, paths, config, assay, logger)
 
-    utils.pseudoalign_10x(
-        paths=paths,
-        fastq_files=paths.multiplexed_files,
-        kb_out_dir=paths.kb_all_dir,
-        tech=config.technology,
-        threads=settings.threads,
-        logger=logger,
-    )
+    if settings.run_kb:
+        utils.pseudoalign_10x(
+            paths=paths,
+            fastq_files=paths.multiplexed_files,
+            kb_out_dir=paths.kb_all_dir,
+            tech=config.technology,
+            threads=settings.threads,
+            logger=logger,
+        )
 
 
 def load_10x_hashtags(settings: RunSettings, config_file: str, hashtags: str, logger: logging.Logger) -> None:
@@ -51,16 +54,18 @@ def load_10x_hashtags(settings: RunSettings, config_file: str, hashtags: str, lo
     paths = HashtagsPaths.build(settings, config, hashtags)
     paths.ensure_dirs(logger)
 
-    utils.core_pipeline(settings, paths, config, hashtags, logger)
+    _run_core_pipeline(settings, paths, config, hashtags, logger)
 
-    utils.pseudoalign_10x_hashtags(
-        paths=paths,
-        fastq_files=paths.multiplexed_files,
-        kb_out_dir=paths.kb_all_dir,
-        tech=config.technology,
-        threads=settings.threads,
-        logger=logger,
-    )
+    if settings.run_kb:
+        utils.pseudoalign_10x_hashtags(
+            paths=paths,
+            fastq_files=paths.multiplexed_files,
+            kb_out_dir=paths.kb_all_dir,
+            tech=config.technology,
+            threads=settings.threads,
+            trim_length=config.r2_trim_length,
+            logger=logger,
+        )
 
 
 def load_parse(settings: RunSettings, config_file: str, assay: str, logger: logging.Logger) -> None:
@@ -68,6 +73,19 @@ def load_parse(settings: RunSettings, config_file: str, assay: str, logger: logg
     config = AnalysisConfig.from_yaml(config_file, assay)
     paths = ParsePaths.build(settings, config, assay)
     paths.ensure_dirs(logger)
+
+    if not parse_config.is_parse_kit(config.technology):
+        raise ValueError(
+            f"'{config.technology}' is not a valid Parse kit name for assay '{assay}'. "
+            "Expected format: '<kit>_v<chem>', e.g. 'WT_v2' or 'WT_mini_v3'."
+        )
+    x_string = parse_config.generate_parse_configs(
+        kit_name=config.technology,
+        parse_info_dir=paths.parse_info_dir,
+        output_dir=paths.config_dir / config.name / assay,
+        wells=config.wells or None,
+        logger=logger,
+    )
 
     _download_reference(settings, paths, config, logger)
     _run_core_pipeline(settings, paths, config, assay, logger)
@@ -90,13 +108,14 @@ def load_parse(settings: RunSettings, config_file: str, assay: str, logger: logg
         )
 
     # Pseudoalign reads separated by barcode type
-    utils.pseudoalign_parse(
-        paths=paths,
-        fastq_files=paths.filtered_files,
-        kb_out_dir=paths.kb_all_dir,
-        tech=config.technology,
-        threads=settings.threads,
-        logger=logger)
+    if settings.run_kb:
+        utils.pseudoalign_parse(
+            paths=paths,
+            fastq_files=paths.filtered_files,
+            kb_out_dir=paths.kb_all_dir,
+            tech=x_string,
+            threads=settings.threads,
+            logger=logger)
 
 
 def subsample_parse(settings: RunSettings, config_file: str, assay: str, subsample_num: int, logger: logging.Logger) -> None:
@@ -104,6 +123,19 @@ def subsample_parse(settings: RunSettings, config_file: str, assay: str, subsamp
     config = AnalysisConfig.from_yaml(config_file, assay)
     paths = ParsePaths.build(settings, config, assay)
     paths.ensure_dirs(logger)
+
+    if not parse_config.is_parse_kit(config.technology):
+        raise ValueError(
+            f"'{config.technology}' is not a valid Parse kit name for assay '{assay}'. "
+            "Expected format: '<kit>_v<chem>', e.g. 'WT_v2' or 'WT_mini_v3'."
+        )
+    x_string = parse_config.generate_parse_configs(
+        kit_name=config.technology,
+        parse_info_dir=paths.parse_info_dir,
+        output_dir=paths.config_dir / config.name / assay,
+        wells=config.wells or None,
+        logger=logger,
+    )
 
     sampled_parse_exist = all(p.is_file() for p in paths.sampled_files)
     if not sampled_parse_exist or settings.overwrite:
@@ -135,32 +167,33 @@ def subsample_parse(settings: RunSettings, config_file: str, assay: str, subsamp
             logger=logger
         )
 
-    utils.pseudoalign_parse(
-        paths=paths,
-        fastq_files=paths.sampled_files,
-        kb_out_dir=paths.kb_sub_dir,
-        tech=config.technology,
-        threads=settings.threads,
-        logger=logger,
-    )
+    if settings.run_kb:
+        utils.pseudoalign_parse(
+            paths=paths,
+            fastq_files=paths.sampled_files,
+            kb_out_dir=paths.kb_sub_dir,
+            tech=x_string,
+            threads=settings.threads,
+            logger=logger,
+        )
 
-    utils.pseudoalign_parse(
-        paths=paths,
-        fastq_files=paths.sampled_polyT_files,
-        kb_out_dir=paths.kb_sub_polyT_dir,
-        tech=config.technology,
-        threads=settings.threads,
-        logger=logger
-    )
+        utils.pseudoalign_parse(
+            paths=paths,
+            fastq_files=paths.sampled_polyT_files,
+            kb_out_dir=paths.kb_sub_polyT_dir,
+            tech=x_string,
+            threads=settings.threads,
+            logger=logger
+        )
 
-    utils.pseudoalign_parse(
-        paths=paths,
-        fastq_files=paths.sampled_randO_files,
-        kb_out_dir=paths.kb_sub_randO_dir,
-        tech=config.technology,
-        threads=settings.threads,
-        logger=logger
-    )
+        utils.pseudoalign_parse(
+            paths=paths,
+            fastq_files=paths.sampled_randO_files,
+            kb_out_dir=paths.kb_sub_randO_dir,
+            tech=x_string,
+            threads=settings.threads,
+            logger=logger
+        )
 
 
 def subsample_10x(settings: RunSettings, config_file: str, assay: str, subsample_num: int, logger: logging.Logger) -> None:
@@ -179,14 +212,15 @@ def subsample_10x(settings: RunSettings, config_file: str, assay: str, subsample
             logger=logger
         )
 
-    utils.pseudoalign_10x(
-        paths=paths,
-        fastq_files=paths.sampled_files,
-        kb_out_dir=paths.kb_sub_dir,
-        tech=config.technology,
-        threads=settings.threads,
-        logger=logger,
-    )
+    if settings.run_kb:
+        utils.pseudoalign_10x(
+            paths=paths,
+            fastq_files=paths.sampled_files,
+            kb_out_dir=paths.kb_sub_dir,
+            tech=config.technology,
+            threads=settings.threads,
+            logger=logger,
+        )
 
 
 def get_subsample_num(

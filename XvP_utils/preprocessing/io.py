@@ -80,6 +80,23 @@ def build_libraries(config: AnalysisConfig, paths: BasePaths) -> list[LibraryFil
             )
         )
     return libraries
+
+
+def build_local_libraries(config: AnalysisConfig, paths: BasePaths) -> list[LibraryFiles]:
+    '''Discover pre-existing gzipped FASTQ files in dumped_dir. Expects Lib{i}_{read_num}.fastq.gz naming.'''
+    libraries: list[LibraryFiles] = []
+    i = 0
+    while True:
+        lib_name = f"Lib{i}"
+        r1 = paths.dumped_dir / f"{lib_name}_{config.r1_num}.fastq.gz"
+        if not r1.exists():
+            break
+        r2 = paths.dumped_dir / f"{lib_name}_{config.r2_num}.fastq.gz"
+        libraries.append(LibraryFiles(name=lib_name, read1_fasta=r1, read2_fasta=r2, is_gzipped=True))
+        i += 1
+    return libraries
+
+
 def run_command(cmd: list[str], logger: logging.Logger) -> None:
     '''A wrapper for subproccess.run to set up logging'''
 

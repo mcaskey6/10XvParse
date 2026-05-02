@@ -17,6 +17,7 @@
 *.barcodes
 *.swp
 *.sra
+*.out
 **/__pycache__/**
 **/Data/**
 **/Index/**

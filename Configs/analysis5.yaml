@@ -6,7 +6,7 @@ SRA:
  10x_2:
  - SRR26594153
  parse:
- - SRR28867558	
+ - SRR28867558
 
 # The suffix for the R1 and R2 FASTA files dumped from fasterq-dump. For some reason these change across datasets
 read_num:
@@ -17,8 +17,8 @@ read_num:
     R1: 1
     R2: 2
   parse:
-    R1: 1
-    R2: 2
+    R1: 2
+    R2: 3
 
 # Files to generate the kallisto index
 reference:
@@ -28,6 +28,6 @@ reference:
 
 # The kb-python technology strings
 tech:
- 10x_1: 10XV3
- 10x_2: 10XV3
- parse: "1,10,18,1,48,56,1,78,86:1,0,10:0,0,0"
+ 10x_1: 10XV4
+ 10x_2: 10XV4
+ parse: WT_v2

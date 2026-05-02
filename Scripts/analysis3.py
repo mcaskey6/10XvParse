@@ -36,11 +36,22 @@ if __name__ == "__main__":
     os.makedirs(settings.root_dir / "Logs", exist_ok=True)
     logger = setup_logger(settings.root_dir / "Logs" / "analysis3.txt")
 
-    load_all(settings, config_file, logger)
+    load_parse(settings, config_file, "parse_H1", logger)
+    load_parse(settings, config_file, "parse_H2", logger)
     subsample_num = get_subsample_num(
         settings, config_file,
         ten_x_assays=["10x_H1", "10x_H2"],
         parse_assays=["parse_H1", "parse_H2"],
         logger=logger,
     )
-    subsample_all(settings, config_file, subsample_num, logger)
+    subsample_parse(settings, config_file, "parse_H1", subsample_num, logger)
+    subsample_parse(settings, config_file, "parse_H2", subsample_num, logger)
+
+    # load_all(settings, config_file, logger)
+    # subsample_num = get_subsample_num(
+    #     settings, config_file,
+    #     ten_x_assays=["10x_H1", "10x_H2"],
+    #     parse_assays=["parse_H1", "parse_H2"],
+    #     logger=logger,
+    # )
+    # subsample_all(settings, config_file, subsample_num, logger)

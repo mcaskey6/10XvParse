@@ -10,8 +10,8 @@ ERA:
 # ENA files arrive as _1.fastq.gz / _2.fastq.gz
 read_num:
   10x:
-    R1: 1
-    R2: 2
+    R1: 2
+    R2: 1
   parse:
     R1: 1
     R2: 2
@@ -26,4 +26,4 @@ reference:
 
 tech:
   10x: 10XV3
-  parse: "1,10,18,1,48,56,1,78,86:1,0,10:0,0,0"
+  parse: WT_mini_v2

@@ -64,5 +64,8 @@ reference:
 tech:
  10x: 10XV3
  10x_hashtags: 10XV3
- parse: "1,10,18,1,48,56,1,78,86:1,0,10:0,0,0"
- parse_mini: "1,10,18,1,48,56,1,78,86:1,0,10:0,0,0"
+ parse: WT_v2
+ parse_mini: WT_mini_v2
+
+ wells:
+  parse: [C7, C8, C9, C10, C11, C12, D1, D2]
