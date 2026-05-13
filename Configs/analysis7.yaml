@@ -29,4 +29,4 @@ tech:
 # sequence transition creates k-mers that collide with kite index entries from
 # other barcodes, dropping pseudoalignment
 trim:
- 10x_hashtags: 15
+ 10x_hashtags: 8

@@ -87,20 +87,24 @@ def plot_filtering_metrics(datasets: list[ad.AnnData]) -> None:
 
     processed = np.array([data.uns['n_processed'] for data in datasets])
     aligned = np.array([data.uns['n_aligned'] for data in datasets])
+    unique = np.array([data.uns['n_unique'] for data in datasets])
     counts = np.array([data.uns['n_raw_counts'] for data in datasets])
     filtered_counts = np.array([data.X.sum() for data in datasets])
     labels = [data.uns['title'] for data in datasets]
 
-    unaligned = processed - aligned
+    unmapped = processed - aligned
+    mapped = aligned - unique
+
     rejected_counts = counts - filtered_counts
 
-    axs[0].bar(labels, aligned, label="Aligned", color="orange")
-    axs[0].bar(labels, unaligned, bottom=aligned, label="Unaligned", color="red")
+    axs[0].bar(labels, unique, label="Uniquely Mapped", color="yellow")
+    axs[0].bar(labels, mapped, bottom=unique, label="Mapped", color="orange")
+    axs[0].bar(labels, unmapped, bottom=mapped+unique, label="Unmapped", color="red")
     axs[0].set_ylabel('Number of Reads')
     axs[0].legend()
 
-    axs[1].bar(labels, filtered_counts, label="Filtered", color='green')
-    axs[1].bar(labels, rejected_counts, bottom=filtered_counts, label="Rejected", color="blue")
+    axs[1].bar(labels, filtered_counts, label="High-Quality Counts", color='green')
+    axs[1].bar(labels, rejected_counts, bottom=filtered_counts, label="Filtered Counts", color="blue")
     axs[1].set_ylabel('Number of Counts')
     axs[1].legend()
 
@@ -182,7 +186,7 @@ def marker_genes(ax: matplotlib.axes.Axes, data: ad.AnnData, markers: list[str])
     ax.violinplot(gene_dist, showmeans=True)
     ax.set_xticks(np.arange(1, len(markers) + 1), markers)
     ax.set_ylabel("")
-    ax.set_title(data.uns['title'] + " Thymus Marker Genes")
+    ax.set_title(data.uns['title'] + " Marker Genes")
 
 
 def collapsed_marker_genes(ax: matplotlib.axes.Axes, data: ad.AnnData, marker_prefixes: list[str]) -> None:

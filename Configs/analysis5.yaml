@@ -1,19 +1,15 @@
 name: Analysis_5
 
 SRA:
- 10x_1:
+ 10x:
  - SRR26594154
- 10x_2:
  - SRR26594153
  parse:
  - SRR28867558
 
 # The suffix for the R1 and R2 FASTA files dumped from fasterq-dump. For some reason these change across datasets
 read_num:
-  10x_1:
-    R1: 1
-    R2: 2
-  10x_2:
+  10x:
     R1: 1
     R2: 2
   parse:
@@ -28,6 +24,5 @@ reference:
 
 # The kb-python technology strings
 tech:
- 10x_1: 10XV4
- 10x_2: 10XV4
+ 10x: 10XV4
  parse: WT_v2

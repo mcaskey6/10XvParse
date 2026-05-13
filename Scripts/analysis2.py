@@ -15,18 +15,12 @@ def load_all(settings: RunSettings, config_file: str, logger) -> None:
     load_parse(settings, config_file, "parse_mini", logger)
 
 
-def subsample_all(settings: RunSettings, config_file: str, subsample_num: int, logger) -> None:
-    '''Run the pipeline to get H5AD files for subsampled 10X and Parse data from the same analysis'''
-    subsample_10x(settings, config_file, "10x", subsample_num, logger)
-    subsample_parse(settings, config_file, "parse", subsample_num, logger)
-    subsample_parse(settings, config_file, "parse_mini", subsample_num, logger)
-
-
 if __name__ == "__main__":
     settings = RunSettings(
         root_dir=Path(__file__).parent.parent,
         config_name="analysis2.yaml",
         overwrite=False,
+        run_kb=True,
         threads=16,
         max_workers=4
     )
@@ -35,20 +29,28 @@ if __name__ == "__main__":
     os.makedirs(settings.root_dir / "Logs", exist_ok=True)
     logger = setup_logger(settings.root_dir / "Logs" / "analysis2.txt")
 
-    load_parse(settings, config_file, "parse", logger)
-    subsample_num = get_subsample_num(
+
+    subsample_num_standard = get_subsample_num(
         settings, config_file,
         ten_x_assays=["10x"],
-        parse_assays=["parse", "parse_mini"],
-        logger=logger,
-    )
-    subsample_parse(settings, config_file, "parse", subsample_num, logger)
+        parse_assays=["parse"],
+        logger=logger,)
+    subsample_parse(settings, config_file, "parse", subsample_num_standard, logger)
 
     # load_all(settings, config_file, logger)
-    # subsample_num = get_subsample_num(
+    # subsample_num_standard = get_subsample_num(
     #     settings, config_file,
     #     ten_x_assays=["10x"],
-    #     parse_assays=["parse", "parse_mini"],
+    #     parse_assays=["parse"],
     #     logger=logger,
     # )
-    # subsample_all(settings, config_file, subsample_num, logger)
+    # subsample_num_mini = get_subsample_num(
+    #     settings, config_file,
+    #     ten_x_assays=["10x"],
+    #     parse_assays=["parse_mini"],
+    #     logger=logger,
+    # )
+    # subsample_10X(settings, config_file, subsample_num_standard, logger, tag="standard")
+    # subsample_10X(settings, config_file, subsample_num_standard, logger, tag="mini")
+    # subsample_parse(settings, config_file, "parse", subsample_num_standard, logger)
+    # subsample_parse(settings, config_file, "parse_mini", subsample_num_mini, logger)

@@ -6,6 +6,7 @@ import numpy as np
 import json
 import subprocess
 import os
+from Bio import SeqIO
 from pybiomart import Server
 import scrublet as scr
 import statsmodels.api as sm
@@ -62,6 +63,7 @@ def init_processing(data_name: str, kb_dir: Path, data_title: str = None, modifi
         run_info = json.load(f)
         data.uns['n_processed'] = run_info['n_processed']
         data.uns['n_aligned'] = run_info['n_pseudoaligned']
+        data.uns['n_unique'] = run_info['n_unique']
     data.uns['n_raw_counts'] = data.X.sum()
 
     sc.pp.filter_genes(data, min_cells=1)
@@ -154,71 +156,50 @@ def _query_biotype(dataset: Any) -> pd.DataFrame:
 
     type_result['is_lnc'] = (type_result['gene_type'] == 'lncRNA')
     type_result['is_pc'] = (type_result['gene_type'] == 'protein_coding')
-    type_result['is_mito'] = type_result['gene_name'].str.startswith("MT")
-    type_result['is_ribo'] = type_result['gene_name'].str.startswith(("RPS", "RPL"))
+    type_result['is_mito'] = type_result['gene_name'].str.startswith(("mt-", "MT-", "MOUSE_mt-", "HUMAN_MT-"))
+    type_result['is_ribo'] = type_result['gene_name'].str.startswith(("Rps", "Rpl", "RPS", "RPL", "MOUSE_Rps", "MOUSE_Rpl", "HUMAN_RPS", "HUMAN_RPL"))
 
     type_result.drop('gene_type', axis=1, inplace=True)
     return type_result
 
 
-def _query_length(dataset: Any) -> pd.DataFrame:
-    """Query Ensembl for approximate gene lengths based on summed exon coordinates.
+def _query_from_fasta(cdna_fasta: Path, t2g: Path) -> pd.DataFrame:
+    """Compute per-gene transcript length and GC content from a kb-python cDNA FASTA.
 
-    Deduplicates shared exons before summing to avoid double-counting.
-
-    Args:
-        dataset: pybiomart Dataset object connected to an Ensembl mart.
-
-    Returns:
-        DataFrame with columns 'gene_id', 'gene_name', and 'gene_length' (bp).
-    """
-    length_result = dataset.query(attributes=[
-        'external_gene_name',
-        'ensembl_gene_id_version',
-        'ensembl_exon_id',
-        'exon_chrom_start',
-        'exon_chrom_end'])
-
-    length_result.columns = ['gene_name', 'gene_id', 'exon_id', 'exon_start', 'exon_end']
-    l_df = length_result.copy()
-
-    l_df.drop_duplicates(subset=['gene_name', 'gene_id', 'exon_start', 'exon_end'], inplace=True)
-    l_df['exon_length'] = l_df['exon_end'] - l_df['exon_start'] + 1
-
-    gene_lengths = l_df.groupby(['gene_id', 'gene_name'])['exon_length'].sum().reset_index()
-    gene_lengths.rename(columns={'exon_length': 'gene_length'}, inplace=True)
-
-    return gene_lengths
-
-
-def _query_gc(dataset: Any) -> pd.DataFrame:
-    """Query Ensembl for mean GC content percentage per gene.
-
-    Averages across transcripts after deduplicating per-transcript entries.
+    Averages transcript length and GC content across all isoforms per gene.
+    This is more complete and accurate than querying Ensembl because every gene
+    present in the kallisto index is guaranteed to have an entry.
 
     Args:
-        dataset: pybiomart Dataset object connected to an Ensembl mart.
+        cdna_fasta: Path to the kb-python cdna.fasta file used to build the kallisto index.
+        t2g: Path to the transcript-to-gene mapping file (t2g.txt).
 
     Returns:
-        DataFrame with columns 'gene_id', 'gene_name', and 'gc_content' (percent).
+        DataFrame with columns 'gene_id', 'gene_name', 'gene_length', and 'gc_content'.
     """
-    gc_result = dataset.query(attributes=[
-        'ensembl_transcript_id_version',
-        'external_gene_name',
-        'ensembl_gene_id_version',
-        'percentage_gene_gc_content'])
+    tx_records = {}
+    for record in SeqIO.parse(cdna_fasta, "fasta"):
+        seq = str(record.seq).upper()
+        length = len(seq)
+        gc = (seq.count('G') + seq.count('C')) / length * 100 if length > 0 else 0.0
+        tx_records[record.id] = {"length": length, "gc_content": gc}
 
-    gc_result.columns = ['transcript_id', 'gene_name', 'gene_id', 'gc_content']
-    gc_result.drop_duplicates(subset=['gene_name', 'gene_id', 'transcript_id', 'gc_content'], inplace=True)
-    gc_result.drop('transcript_id', axis=1, inplace=True)
+    t2g_df = pd.read_csv(t2g, sep="\t", header=None,
+                         usecols=[0, 1, 2], names=["transcript_id", "gene_id", "gene_name"])
+    t2g_df["gene_length"] = t2g_df["transcript_id"].map(
+        lambda x: tx_records.get(x, {}).get("length"))
+    t2g_df["gc_content"] = t2g_df["transcript_id"].map(
+        lambda x: tx_records.get(x, {}).get("gc_content"))
 
-    gc_content = gc_result.groupby(['gene_id', 'gene_name'])['gc_content'].mean().reset_index()
-
-    return gc_content
+    return t2g_df.groupby(["gene_id", "gene_name"])[["gene_length", "gc_content"]].mean().reset_index()
 
 
-def query_ensembl(dir: Path, species: str, overwrite: bool = False) -> pd.DataFrame:
-    """Retrieve and cache gene annotations (biotype, length, GC content) from Ensembl.
+def query_ensembl(dir: Path, species: str, index_dir: Path, overwrite: bool = False) -> pd.DataFrame:
+    """Retrieve and cache gene annotations (biotype, length, GC content).
+
+    Biotype is queried from Ensembl via pybiomart. Length and GC content are
+    computed directly from the kb-python cDNA FASTA, guaranteeing complete
+    coverage for every gene in the kallisto index.
 
     If a cached CSV already exists at <dir>/gene_data/gene_attributes.csv and
     overwrite is False, the cached file is returned without querying the server.
@@ -227,7 +208,8 @@ def query_ensembl(dir: Path, species: str, overwrite: bool = False) -> pd.DataFr
         dir: Base directory under which gene_data/ is created.
         species: Ensembl species prefix used to select the gene dataset
             (e.g. 'hsapiens' or 'mmusculus').
-        overwrite: If True, re-queries Ensembl even when the cache file exists.
+        index_dir: Path to the kb-python kallisto index directory containing cdna.fasta and t2g.txt.
+        overwrite: If True, re-queries even when the cache file exists.
 
     Returns:
         DataFrame with columns 'gene_id', 'gene_name', 'gene_length', 'gc_content',
@@ -243,19 +225,58 @@ def query_ensembl(dir: Path, species: str, overwrite: bool = False) -> pd.DataFr
     else:
         server = Server(host='http://ensembl.org')
         dataset = server.marts['ENSEMBL_MART_ENSEMBL'] \
-                        .datasets[f'{species}_gene_ensembl']
+                        .datasets[f"{species}_gene_ensembl"]
 
         type_result = _query_biotype(dataset)
-        length_result = _query_length(dataset)
-        gc_result = _query_gc(dataset)
+        fasta_result = _query_from_fasta(index_dir / "cdna.fasta", index_dir / "t2g.txt")
 
-        gene_info = pd.merge(length_result, type_result, on=['gene_name', 'gene_id'])
-        gene_info = pd.merge(gene_info, gc_result, on=['gene_name', 'gene_id'])
-
+        gene_info = pd.merge(fasta_result, type_result, on=['gene_name', 'gene_id'])
         gene_info.drop_duplicates(subset=['gene_name', 'gene_id'], inplace=True)
         gene_info.to_csv(path)
 
     return gene_info
+
+
+def query_ensembl_combined(dir: Path, index_dir: Path, overwrite: bool = False) -> pd.DataFrame:
+    """Retrieve and cache gene annotations for a combined human/mouse reference.
+
+    Length and GC content are computed from the combined kb-python cDNA FASTA
+    (which already contains HUMAN_/MOUSE_ prefixes). Biotype annotations are
+    queried from Ensembl for each species separately and prefixed to match.
+
+    Args:
+        dir: Base directory under which gene_data/ is created.
+        index_dir: Path to the combined kb-python kallisto index directory containing cdna.fasta and t2g.txt.
+        overwrite: If True, re-queries even when the cache file exists.
+
+    Returns:
+        DataFrame with columns 'gene_id', 'gene_name', 'gene_length', 'gc_content',
+        'is_lnc', 'is_pc', 'is_mito', and 'is_ribo'.
+    """
+    gene_data_dir = dir / "gene_data"
+    if not gene_data_dir.exists():
+        gene_data_dir.mkdir(parents=False)
+    path = gene_data_dir / "gene_attributes.csv"
+
+    if os.path.exists(path) and not overwrite:
+        return pd.read_csv(path, index_col=[0])
+
+    fasta_result = _query_from_fasta(index_dir / "cdna.fasta", index_dir / "t2g.txt")
+
+    server = Server(host='http://ensembl.org')
+    type_results = []
+    for species, prefix in [("mmusculus", "MOUSE_"), ("hsapiens", "HUMAN_")]:
+        dataset = server.marts['ENSEMBL_MART_ENSEMBL'].datasets[f"{species}_gene_ensembl"]
+        type_result = _query_biotype(dataset)
+        type_result['gene_name'] = prefix + type_result['gene_name']
+        type_result['gene_id'] = prefix + type_result['gene_id']
+        type_results.append(type_result)
+
+    type_combined = pd.concat(type_results, ignore_index=True)
+    combined = pd.merge(fasta_result, type_combined, on=['gene_name', 'gene_id'])
+    combined.drop_duplicates(subset=['gene_name', 'gene_id'], inplace=True)
+    combined.to_csv(path)
+    return combined
 
 
 def add_cell_metrics(data: ad.AnnData, gene_info: pd.DataFrame) -> None:
@@ -271,11 +292,15 @@ def add_cell_metrics(data: ad.AnnData, gene_info: pd.DataFrame) -> None:
     """
     lnc_result = gene_info["gene_id"][gene_info['is_lnc']].tolist()
     pc_result = gene_info["gene_id"][gene_info['is_pc']].tolist()
+    mito_result = gene_info["gene_id"][gene_info['is_mito']].tolist()
+    ribo_result = gene_info["gene_id"][gene_info['is_ribo']].tolist()
     gene_lengths = gene_info[['gene_id', 'gene_length']].drop_duplicates()
     gc_content = gene_info[['gene_id', 'gc_content']].drop_duplicates()
 
     lncRNA_genes = set(data.var["gene_id"].tolist()).intersection(set(lnc_result))
     pc_genes = set(data.var["gene_id"].tolist()).intersection(set(pc_result))
+    mito_genes = set(data.var["gene_id"].tolist()).intersection(set(mito_result))
+    ribo_genes = set(data.var["gene_id"].tolist()).intersection(set(ribo_result))
 
     data.var["is_lnc"] = np.full(len(data.var_names), False)
     data.var.loc[data.var["gene_id"].isin(list(lncRNA_genes)), ["is_lnc"]] = True
@@ -283,9 +308,12 @@ def add_cell_metrics(data: ad.AnnData, gene_info: pd.DataFrame) -> None:
     data.var["is_pc"] = np.full(len(data.var_names), False)
     data.var.loc[data.var["gene_id"].isin(list(pc_genes)), ["is_pc"]] = True
 
-    data.var["is_mito"] = data.var_names.str.startswith(("mt", "MT"))
-    data.var["is_ribo"] = data.var_names.str.startswith(("Rps", "Rpl", "RPS", "RPL"))
+    data.var["is_mito"] = np.full(len(data.var_names), False)
+    data.var.loc[data.var["gene_id"].isin(list(mito_genes)), ["is_mito"]] = True
 
+    data.var["is_ribo"] = np.full(len(data.var_names), False)
+    data.var.loc[data.var["gene_id"].isin(list(ribo_genes)), ["is_ribo"]] = True
+    
     pc_counts = data[:, data.var['is_pc']].X.sum(axis=1)
     mito_counts = data[:, data.var['is_mito']].X.sum(axis=1)
     ribo_counts = data[:, data.var['is_ribo']].X.sum(axis=1)
@@ -357,6 +385,49 @@ def detect_doublets(datasets: list[ad.AnnData]) -> list[scr.Scrublet]:
         data, scrub = doublet_detection(data)
         scrubs.append(scrub)
     return scrubs
+
+# Export bulk counts for H2 to compare with bulk RNA-seq data.
+def export_bulk_counts(datasets: list[ad.AnnData], sample: str = None):
+    """Aggregate counts across all cells in each dataset and export to a TSV file for comparison with edgeR. 
+    Output file is bulk_counts/bulk_counts.tsv, or bulk_counts/<sample>_bulk_counts.tsv if a sample name is provided.
+
+    Args:
+        datasets: List of AnnData objects to process. Expects datasets[0] to be 10x and datasets[3] to be Parse.
+        sample: Optional sample identifier to append to output file. If None, defaults to "bulk_counts.tsv". 
+                If provided, output file is "<sample>_bulk_counts.tsv".
+    """
+
+    if sample:
+        sample_str = f"_{sample}"
+    else:        
+        sample_str = ""
+
+    bulk_10x_df = pd.DataFrame({
+        "gene_id":   datasets[0].var["gene_id"].values,
+        "gene_name": datasets[0].var_names,
+        f"tenx":   np.asarray(datasets[0].X.sum(axis=0)).flatten().astype(int)})
+    
+    bulk_parse_df = pd.DataFrame({
+        "gene_id":   datasets[3].var["gene_id"].values,
+        "gene_name": datasets[3].var_names,
+        f"parse":  np.asarray(datasets[3].X.sum(axis=0)).flatten().astype(int)})
+    
+    bulk_df = pd.merge(bulk_10x_df, bulk_parse_df, on=["gene_id", "gene_name"], how="outer")
+    bulk_df.fillna(0, inplace=True)
+
+    bulk_counts_dir = Path("bulk_counts")
+    bulk_counts_dir.mkdir(exist_ok=True)
+
+    if sample:
+        bulk_counts_file = bulk_counts_dir / f"{sample}_bulk_counts.tsv"
+    else:
+        bulk_counts_file = bulk_counts_dir / f"bulk_counts.tsv"
+
+    bulk_df.to_csv(bulk_counts_file, sep="\t", index=False)
+
+    print(f"Exported {len(datasets[0].var)} genes")
+    print(f"\ttenx{sample_str} total counts: {bulk_10x_df['tenx'].sum():,}  ({datasets[0].n_obs:,} cells)")
+    print(f"\tparse{sample_str} total counts: {bulk_parse_df['parse'].sum():,}  ({datasets[3].n_obs:,} cells)")
 
 
 def compare_genes(data_x: ad.AnnData, data_y: ad.AnnData) -> pd.DataFrame:

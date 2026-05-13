@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+
+import yaml
 
 from .classes import RunSettings, AnalysisConfig, TenXPaths, HashtagsPaths, ParsePaths
 from . import utils, parse_config
@@ -196,17 +199,33 @@ def subsample_parse(settings: RunSettings, config_file: str, assay: str, subsamp
         )
 
 
-def subsample_10x(settings: RunSettings, config_file: str, assay: str, subsample_num: int, logger: logging.Logger) -> None:
-    '''Subsample the 10X FASTQ files for comparison.'''
+def subsample_10x(settings: RunSettings, config_file: str, assay: str, subsample_num: int, logger: logging.Logger, tag: str = "") -> None:
+    '''Subsample the 10X FASTQ files for comparison.
+
+    Use `tag` to produce multiple subsampled outputs at different depths from the same raw data
+    (e.g. tag="mini" and tag="standard" for separate Parse kit comparisons). Each tag gets its
+    own FASTA/Sampled_<tag>/ directory and kb_python/sampled_<tag>_out/ directory.
+    '''
     config = AnalysisConfig.from_yaml(config_file, assay)
     paths = TenXPaths.build(settings, config, assay)
     paths.ensure_dirs(logger)
 
-    sampled_10x_exist = all(p.is_file() for p in paths.sampled_files)
-    if not sampled_10x_exist or settings.overwrite:
+    if tag:
+        sampled_dir = paths.fasta_dir / f"Sampled_{tag}"
+        sampled_files = [sampled_dir / f"{assay}_{i}.fastq.gz" for i in range(2)]
+        kb_sub_dir = paths.kb_dir / f"sampled_{tag}_out"
+        from .classes import make_dir
+        make_dir(sampled_dir, logger)
+        make_dir(kb_sub_dir, logger)
+    else:
+        sampled_files = paths.sampled_files
+        kb_sub_dir = paths.kb_sub_dir
+
+    sampled_exist = all(p.is_file() for p in sampled_files)
+    if not sampled_exist or settings.overwrite:
         utils.subsample_fastqs(
             fastq_files=paths.multiplexed_files,
-            output_files=paths.sampled_files,
+            output_files=sampled_files,
             num_reads=subsample_num,
             threads=settings.threads,
             logger=logger
@@ -215,8 +234,8 @@ def subsample_10x(settings: RunSettings, config_file: str, assay: str, subsample
     if settings.run_kb:
         utils.pseudoalign_10x(
             paths=paths,
-            fastq_files=paths.sampled_files,
-            kb_out_dir=paths.kb_sub_dir,
+            fastq_files=sampled_files,
+            kb_out_dir=kb_sub_dir,
             tech=config.technology,
             threads=settings.threads,
             logger=logger,
@@ -230,25 +249,57 @@ def get_subsample_num(
     parse_assays: list[str],
     logger: logging.Logger,
 ) -> int:
-    '''Count reads in processed FASTQ files and return the minimum across all assays.'''
-    counts: dict[str, int] = {}
+    '''Count reads in processed FASTQ files and return the minimum across all assays.
+    Per-file counts are cached to Configs/<analysis_name>/read_counts.yaml. On subsequent
+    calls, only files missing from the cache are recounted; the minimum is always computed
+    from the current assay set only. Pass overwrite=True to force a full recount.'''
+    config_file = Path(config_file)
+    all_assays = ten_x_assays + parse_assays
+    analysis_name = AnalysisConfig.from_yaml(config_file, all_assays[0]).name
+    cache_file = config_file.parent / analysis_name / "read_counts.yaml"
 
+    cached: dict[str, int] = {}
+    if cache_file.is_file():
+        with open(cache_file) as f:
+            cached = yaml.safe_load(f) or {}
+
+    # Collect the files required for the current assay set
+    needed: dict[str, Path] = {}
     for assay in ten_x_assays:
         config = AnalysisConfig.from_yaml(config_file, assay)
         paths = TenXPaths.build(settings, config, assay)
         f = paths.multiplexed_files[0]
-        n = utils._count_reads(f)
-        counts[str(f)] = n
-        logger.info("%s: %d reads", f, n)
-
+        needed[str(f)] = f
     for assay in parse_assays:
         config = AnalysisConfig.from_yaml(config_file, assay)
         paths = ParsePaths.build(settings, config, assay)
         for f in [paths.filtered_files[0], paths.polyT_files[0], paths.randO_files[0]]:
-            n = utils._count_reads(f)
-            counts[str(f)] = n
-            logger.info("%s: %d reads", f, n)
+            needed[str(f)] = f
+
+    # Use cached counts where available; recount missing or stale files
+    counts: dict[str, int] = {}
+    cache_updated = False
+    for path_str, path in needed.items():
+        if path_str in cached and not settings.overwrite:
+            counts[path_str] = cached[path_str]
+            logger.info("%s: %d reads (cached)", path_str, counts[path_str])
+        else:
+            n = utils._count_reads(path)
+            counts[path_str] = n
+            cached[path_str] = n
+            logger.info("%s: %d reads", path_str, n)
+            cache_updated = True
+
+    if cache_updated:
+        with open(cache_file, "w") as f:
+            yaml.dump(cached, f)
+        logger.info("Updated read count cache at %s", cache_file)
 
     minimum = min(counts.values())
     logger.info("Minimum reads across all assays: %d", minimum)
     return minimum
+    
+    
+
+
+    

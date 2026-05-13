@@ -620,13 +620,5 @@ def local_pipeline(
         raise FileNotFoundError(f"Local library files missing: {missing}")
     _multiplex_into_fastq(settings, paths, libraries, logger)
 
+    
 
-def _count_reads(fastq_gz: Path) -> int:
-    '''Count reads in a gzipped FASTQ by dividing line count by 4.'''
-    zcat = subprocess.Popen(["zcat", str(fastq_gz)], stdout=subprocess.PIPE)
-    wc = subprocess.Popen(["wc", "-l"], stdin=zcat.stdout, stdout=subprocess.PIPE)
-    assert zcat.stdout is not None
-    zcat.stdout.close()
-    out, _ = wc.communicate()
-    zcat.wait()
-    return int(out.strip()) // 4

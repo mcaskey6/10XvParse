@@ -1,0 +1,2 @@
+r1_R /home/mcaskey/10XvParse/Data/Analysis_7/parse/FASTA/Processed/randO
+r1_T /home/mcaskey/10XvParse/Data/Analysis_7/parse/FASTA/Processed/polyT
