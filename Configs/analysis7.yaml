@@ -13,10 +13,7 @@ read_num:
     R2: 2
 
 # Files to generate the kallisto index
-reference:
- species: human
- fasta: https://ftp.ensembl.org/pub/release-115/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
- gtf: https://ftp.ensembl.org/pub/release-115/gtf/homo_sapiens/Homo_sapiens.GRCh38.115.gtf.gz
+species: human
 
 # kit name
 tech:

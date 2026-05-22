@@ -5,18 +5,23 @@ from pathlib import Path
 
 import yaml
 
-from .classes import RunSettings, AnalysisConfig, TenXPaths, HashtagsPaths, ParsePaths
-from . import utils, parse_config
+from .classes import RunSettings, AnalysisConfig, IndexConfig, TenXPaths, HashtagsPaths, ParsePaths
+from . import utils, parse_config, io
 
 
-def _download_reference(settings: RunSettings, paths: TenXPaths, config: AnalysisConfig, logger: logging.Logger) -> None:
-    '''Download reference genome. Builds a barnyard (dual-species) reference when config.is_barnyard.'''
+def _load_index_config(settings: RunSettings, config: AnalysisConfig) -> IndexConfig:
+    index_config_file = settings.root_dir / "Configs" / "indexes" / f"{config.species}.yaml"
+    return IndexConfig.from_yaml(index_config_file)
+
+
+def _download_reference(settings: RunSettings, paths: TenXPaths, index_config: IndexConfig, logger: logging.Logger) -> None:
+    '''Download reference genome. Builds a barnyard (dual-species) reference when index_config.is_barnyard.'''
     ref_exists = paths.genome_file.is_file() and paths.gtf_file.is_file()
     if not ref_exists or settings.overwrite:
-        if config.is_barnyard:
-            utils.make_barnyard_reference(paths, config, logger)
+        if index_config.is_barnyard:
+            utils.make_barnyard_reference(paths, index_config, logger)
         else:
-            utils.get_reference(paths.genome_file, paths.gtf_file, config.genome_url, config.gtf_url, logger)
+            utils.get_reference(paths.genome_file, paths.gtf_file, index_config.fasta_url, index_config.gtf_url, logger)
     else:
         logger.info("Reference files already exist. Skipping reference download.")
 
@@ -37,7 +42,8 @@ def load_10x(settings: RunSettings, config_file: str, assay: str, logger: loggin
     paths = TenXPaths.build(settings, config, assay)
     paths.ensure_dirs(logger)
 
-    _download_reference(settings, paths, config, logger)
+    index_config = _load_index_config(settings, config)
+    _download_reference(settings, paths, index_config, logger)
     _run_core_pipeline(settings, paths, config, assay, logger)
 
     if settings.run_kb:
@@ -90,7 +96,8 @@ def load_parse(settings: RunSettings, config_file: str, assay: str, logger: logg
         logger=logger,
     )
 
-    _download_reference(settings, paths, config, logger)
+    index_config = _load_index_config(settings, config)
+    _download_reference(settings, paths, index_config, logger)
     _run_core_pipeline(settings, paths, config, assay, logger)
 
     filter_parse_fastqs_exist = all(p.is_file() for p in paths.filtered_files)
@@ -299,7 +306,87 @@ def get_subsample_num(
     logger.info("Minimum reads across all assays: %d", minimum)
     return minimum
     
+def get_genebody_plot(
+    settings: RunSettings, 
+    config_file: str, 
+    tenx_assay: str, parse_assay: str, 
+    logger: logging.Logger,
+    tag: str = None
+) -> None:
     
+    '''Generate genebody coverage plot for 10X and Parse data.'''
+    star_prefixes = []
 
+    config_10x = AnalysisConfig.from_yaml(config_file, tenx_assay)
+    paths_10x = TenXPaths.build(settings, config_10x, tenx_assay)
+    paths_10x.ensure_dirs(logger)
 
-    
+    star_prefixes.append(
+        utils.run_star_10x(
+            paths=paths_10x,
+            settings=settings,
+            assay=tenx_assay,
+            logger=logger,
+            tag=tag,
+            overwrite=settings.run_kb,
+        )
+    )
+
+    config_parse = AnalysisConfig.from_yaml(config_file, parse_assay)
+    paths_parse = ParsePaths.build(settings, config_parse, parse_assay)
+    paths_parse.ensure_dirs(logger)
+
+    star_prefixes.append(
+        utils.run_star_parse(
+            paths=paths_parse,
+            config=config_parse,
+            settings=settings,
+            assay=parse_assay,
+            fastq_files=paths_parse.filtered_files,
+            logger=logger,
+            tag="all",
+            overwrite=settings.run_kb
+        )
+    )
+
+    star_prefixes.append(
+        utils.run_star_parse(
+            paths=paths_parse,
+            config=config_parse,
+            settings=settings,
+            assay=parse_assay,
+            fastq_files=paths_parse.polyT_files,
+            logger=logger,
+            tag="polyT",
+            overwrite=settings.run_kb
+        )
+    )
+
+    star_prefixes.append(
+        utils.run_star_parse(
+            paths=paths_parse,
+            config=config_parse,
+            settings=settings,
+            assay=parse_assay,
+            fastq_files=paths_parse.randO_files,
+            logger=logger,
+            tag="randO",
+            overwrite=settings.run_kb
+        )
+    )
+
+    index_config = _load_index_config(settings, config_10x)
+    bam_files = [prefix + "Aligned.sortedByCoord.out.bam" for prefix in star_prefixes]
+    utils.generate_genebody_plot(
+        settings=settings,
+        gtf_file=paths_10x.gtf_file,
+        bed_file=paths_10x.bed_file,
+        bam_files=bam_files,
+        gene_body_dir=paths_10x.plot_dir,
+        logger=logger,
+        hk_genes_file=paths_10x.hk_genes_file,
+        hrt_atlas_url=index_config.hrt_atlas_url,
+        hrt_atlas_url_2=index_config.hrt_atlas_url_2 or None,
+        hk_bed_file=paths_10x.hk_bed_file,
+        tag=tag,
+    )

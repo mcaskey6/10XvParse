@@ -104,6 +104,11 @@ def generate_parse_configs(
     ]
     (output_dir / "replace.txt").write_text("\n".join(replace_lines) + "\n")
 
+    # star_bc*.txt — per-round whitelists for STARsolo CB_UMI_Complex (one barcode per line)
+    (output_dir / "star_bc3.txt").write_text("\n".join(bc3_seqs) + "\n")
+    (output_dir / "star_bc2.txt").write_text("\n".join(bc2_seqs) + "\n")
+    (output_dir / "star_bc1.txt").write_text("\n".join(bc1_all_seqs) + "\n")
+
     if logger:
         logger.info(
             "Generated Parse configs for %s (%d wells) in %s",
@@ -113,3 +118,21 @@ def generate_parse_configs(
         )
 
     return kit_info["x_string"]
+
+
+def x_string_to_star_params(x_string: str) -> tuple[list[str], str]:
+    """Return (cb_positions, umi_position) for STARsolo CB_UMI_Complex.
+
+    Converts kb-python half-open positions to STAR anchor-based positions.
+    The kb file index is ignored — barcodes are always in the second file in
+    --readFilesIn, and positions are measured from read start (anchor 0).
+    Format: 0_start_0_(end-1)
+    """
+    bc_part, umi_part, *_ = x_string.split(":")
+    nums = [int(n) for n in bc_part.split(",")]
+    cb_positions = [
+        f"0_{nums[i + 1]}_0_{nums[i + 2] - 1}"
+        for i in range(0, len(nums), 3)
+    ]
+    u = [int(n) for n in umi_part.split(",")]
+    return cb_positions, f"0_{u[1]}_0_{u[2] - 1}"

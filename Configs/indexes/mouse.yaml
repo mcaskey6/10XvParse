@@ -1,0 +1,4 @@
+species: mouse
+fasta: https://ftp.ensembl.org/pub/release-115/fasta/mus_musculus/dna/Mus_musculus.GRCm39.dna.primary_assembly.fa.gz
+gtf: https://ftp.ensembl.org/pub/release-115/gtf/mus_musculus/Mus_musculus.GRCm39.115.gtf.gz
+hrt_atlas_url: https://raw.githubusercontent.com/Bidossessih/HRT_Atlas/master/www/Housekeeping_GenesMouse.csv

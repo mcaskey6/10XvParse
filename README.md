@@ -6,11 +6,13 @@ This repository reproduces and compares published single-cell RNA-seq datasets g
 
 ```
 10XvParse/
-├── Configs/              # Per-analysis YAML config files and assay-specific reference data
+├── Configs/              # Config files
+│   ├── indexes/          # Per-species index configs (reference URLs, HRT Atlas URL)
+|   ├── 10x_info/         # 10X kit whitelists (for STAR alignment)
 │   ├── parse_info/       # Parse kit barcode reference (kits_info.txt + barcodes/*.csv)
 │   └── Analysis_N/       # Per-assay config dirs (auto-generated Parse files + static 10X files)
 ├── Data/             # Downloaded FASTQs, pseudoalignment outputs, and H5AD files (gitignored)
-├── Index/            # kallisto indices, organized by species
+├── Index/            # kallisto indices and genome references, organized by species
 ├── Logs/             # Log files from preprocessing runs
 ├── Notebooks/        # Jupyter notebooks for downstream analysis and plotting
 ├── Scripts/          # Python entry-point scripts, one per analysis
@@ -131,12 +133,29 @@ parse: AZ12601/AZ_PS_5k_S5_L002 and AZ12601/AZ_PS_10k_S6_L002; Parse Evercode mi
 
 Follow these steps to add a new analysis:
 
-### 1. Create a config file
+### 1. Create or update an index config
+
+Reference URLs and the HRT Atlas URL live in `Configs/indexes/{species}.yaml`, separate from the per-analysis configs. If you are using an existing species (`mouse`, `human`, or `human_mouse`) the index config already exists and nothing needs to change. If you need a new species or a different Ensembl release, create `Configs/indexes/{species}.yaml`:
+
+```yaml
+species: human
+fasta: https://ftp.ensembl.org/pub/release-115/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+gtf: https://ftp.ensembl.org/pub/release-115/gtf/homo_sapiens/Homo_sapiens.GRCh38.115.gtf.gz
+hrt_atlas_url: https://raw.githubusercontent.com/Bidossessih/HRT_Atlas/master/www/Housekeeping_GenesHuman.csv
+```
+
+The index directory (`Index/{species}/`) is shared across all analyses with the same species — updating the URL here will cause the reference to be re-downloaded on the next run (or set `overwrite=True` in `RunSettings`).
+
+For barnyard indexes the format uses per-species keys — see `Configs/indexes/human_mouse.yaml` for the pattern.
+
+### 2. Create a config file
 
 Copy an existing config from `Configs/` and edit it for your dataset. The config has four required sections:
 
 ```yaml
 name: Analysis_N
+
+species: human  # or "mouse" / "human_mouse"; determines which Configs/indexes/ file is used
 
 # SRA or ERA accession numbers, grouped by assay type
 SRA:
@@ -145,7 +164,8 @@ SRA:
   parse:
     - SRR_XXXXXXX
 
-# R1/R2 file suffixes produced by fasterq-dump. This varies across datasets depending upon whether or not Illumina sample indices were indexed and in what order they were saved to SRA.
+# R1/R2 file suffixes produced by fasterq-dump. This varies across datasets depending upon
+# whether or not Illumina sample indices were indexed and in what order they were saved to SRA.
 read_num:
   10x:
     R1: 1
@@ -154,12 +174,6 @@ read_num:
     R1: 1
     R2: 2
 
-# Ensembl reference files for building the kallisto index
-reference:
-  species: human   # or "mouse"; controls index reuse from Index/
-  fasta: https://ftp.ensembl.org/pub/release-115/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
-  gtf: https://ftp.ensembl.org/pub/release-115/gtf/homo_sapiens/Homo_sapiens.GRCh38.115.gtf.gz
-
 # kb-python technology strings for 10X assays; Parse kit name for Parse assays
 tech:
   10x: 10XV3
@@ -167,15 +181,15 @@ tech:
 
 # Optional: restrict Parse splitcode filtering to a subset of wells.
 # If omitted, all wells in the kit are used.
- wells:
+wells:
   parse: [A1, A2, A3]
 ```
 
 For Parse assays, the `tech` value must be a kit name of the form `<kit>_v<chem>` (e.g. `WT_v2`, `WT_mini_v3`). The pipeline looks this up in `Configs/parse_info/kits_info.txt` to obtain the kb-python technology x-string and the correct barcode files, then auto-generates all required splitcode/kb-python config files before running.
 
-Use `ERA` instead of `SRA` for European Nucleotide Archive accessions. For barnyard (dual-species) experiments, provide both a human and mouse `fasta`/`gtf` — see `analysis4.yaml` for the pattern.
+Use `ERA` instead of `SRA` for European Nucleotide Archive accessions.
 
-### 2. Write a script
+### 3. Write a script
 
 Create `Scripts/analysisN.py` based on an existing script. At minimum, call `load_10x` and `load_parse` (and `subsample_*` variants if you want depth-matched comparisons):
 
@@ -211,7 +225,7 @@ if __name__ == "__main__":
     subsample_parse(settings, config_file, "parse", subsample_num, logger)
 ```
 
-### 3. Run the script
+### 4. Run the script
 
 ```bash
 python Scripts/analysisN.py
@@ -219,10 +233,10 @@ python Scripts/analysisN.py
 
 kb python outputs with `.h5ad` files will be written to `Data/Analysis_N/{assat}/kb_python`. Logs go to `Logs/analysisN.txt`.
 
-### 4. Add a notebook
+### 5. Add a notebook
 
 Create a directory `Notebooks/Analysis_N/` and add a Jupyter notebook for downstream analysis and figures, following the pattern in `Notebooks/Analysis_2/` or `Notebooks/Analysis_3/`.
 
-### 5. Update this README
+### 6. Update this README
 
 Add an entry for the new dataset under the **Datasets** section above, including the paper link, sample description, and accession numbers.

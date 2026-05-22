@@ -55,10 +55,7 @@ read_num:
     R2: 2
 
 # Files to generate the kallisto index
-reference:
- species: mouse
- fasta: https://ftp.ensembl.org/pub/release-115/fasta/mus_musculus/dna/Mus_musculus.GRCm39.dna.primary_assembly.fa.gz
- gtf: https://ftp.ensembl.org/pub/release-115/gtf/mus_musculus/Mus_musculus.GRCm39.115.gtf.gz
+species: mouse
 
 # The kb-python technology strings
 tech:

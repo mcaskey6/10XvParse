@@ -28,6 +28,38 @@ class RunSettings:
 
 
 @dataclass(frozen=True)
+class IndexConfig:
+    '''Reference URLs and HRT Atlas links for a species-specific genome index.
+    Loaded from Configs/indexes/{species}.yaml.'''
+    species: str
+    fasta_url: str = ""
+    gtf_url: str = ""
+    fasta_url_2: str = ""       # second species (barnyard only)
+    gtf_url_2: str = ""         # second species (barnyard only)
+    hrt_atlas_url: str = ""
+    hrt_atlas_url_2: str = ""   # second species (barnyard only)
+
+    @property
+    def is_barnyard(self) -> bool:
+        return bool(self.fasta_url_2)
+
+    @classmethod
+    def from_yaml(cls, config_file: Path) -> "IndexConfig":
+        with open(config_file, "r") as f:
+            raw = yaml.safe_load(f)
+        is_barnyard = "human_fasta" in raw
+        return cls(
+            species=raw["species"],
+            fasta_url=raw.get("human_fasta" if is_barnyard else "fasta", ""),
+            gtf_url=raw.get("human_gtf" if is_barnyard else "gtf", ""),
+            fasta_url_2=raw.get("mouse_fasta", ""),
+            gtf_url_2=raw.get("mouse_gtf", ""),
+            hrt_atlas_url=raw.get("human_hrt_atlas_url" if is_barnyard else "hrt_atlas_url", ""),
+            hrt_atlas_url_2=raw.get("mouse_hrt_atlas_url", ""),
+        )
+
+
+@dataclass(frozen=True)
 class AnalysisConfig:
     '''Object to store information from the analysis YAML file'''
     # Required fields
@@ -39,11 +71,6 @@ class AnalysisConfig:
     # Accession lists — one of sra or era will be populated
     sra: list[str] = field(default_factory=list)
     era: list[str] = field(default_factory=list)
-    # Reference URLs — genome_url_2/gtf_url_2 set for barnyard (dual-species) configs
-    genome_url: str = ""
-    gtf_url: str = ""
-    genome_url_2: str = ""
-    gtf_url_2: str = ""
     # Optional R2 trim length (bp) — used for feature barcode libraries where long reads
     # cause downstream k-mers to collide with kite index entries from other barcodes
     r2_trim_length: int | None = None
@@ -52,7 +79,7 @@ class AnalysisConfig:
 
     @property
     def is_barnyard(self) -> bool:
-        return bool(self.genome_url_2)
+        return "_" in self.species
 
     @classmethod
     def from_yaml(cls, config_file: Path, assay: str) -> "AnalysisConfig":
@@ -61,20 +88,13 @@ class AnalysisConfig:
         with open(config_file, "r") as f:
             raw = yaml.safe_load(f)
 
-        ref = raw["reference"]
-        is_barnyard = "human_fasta" in ref
-
         return cls(
             name=raw["name"],
             sra=raw.get("SRA", {}).get(assay, []),
             era=raw.get("ERA", {}).get(assay, []),
             r1_num=raw["read_num"][assay]["R1"],
             r2_num=raw["read_num"][assay]["R2"],
-            genome_url=ref.get("human_fasta" if is_barnyard else "fasta", ""),
-            gtf_url=ref.get("human_gtf" if is_barnyard else "gtf", ""),
-            genome_url_2=ref.get("mouse_fasta", ""),
-            gtf_url_2=ref.get("mouse_gtf", ""),
-            species=ref["species"],
+            species=raw["species"],
             technology=raw["tech"][assay],
             r2_trim_length=raw.get("trim", {}).get(assay),
             wells=raw.get("tech", {}).get("wells", {}).get(assay, []),
@@ -155,14 +175,20 @@ class BasePaths:
 
     def ensure_dirs(self, logger: logging.Logger) -> None:
         for d in self.directories():
-            make_dir(d, logger)
+            if d is not None:
+                make_dir(d, logger)
 
 
 @dataclass(frozen=True)
 class TenXPaths(BasePaths):
     '''Paths for the 10x Genomics pipeline. Adds genome reference and kallisto index paths.'''
     index_dir: Path
+    star_dir: Path
+    star_index_dir: Path
     index_file: Path
+    bed_file: Path
+    hk_genes_file: Path
+    hk_bed_file: Path
     t2g_file: Path
     cdna_file: Path
     nascent_file: Path
@@ -170,27 +196,41 @@ class TenXPaths(BasePaths):
     nascent_fasta_file: Path
     genome_file: Path
     gtf_file: Path
+    kb_onlist: Path
+    plot_dir: Path
 
     @classmethod
     def build(cls, settings: RunSettings, config: AnalysisConfig, assay: str) -> "TenXPaths":
         base = BasePaths.build(settings, config, assay)
         index_dir = settings.root_dir / "Index" / config.species
+        star_dir = base.outdir / "STARsolo"
+        star_index_dir = settings.root_dir / "Index" / f"{config.species}_STAR"
+        kb_onlist = base.config_dir / "10x_info" / f"{config.technology}_whitelist.txt"
         base_fields = {f.name: getattr(base, f.name) for f in fields(base)}
+        plot_dir = settings.root_dir/ "Data" / config.name / "Plots"
+
         return cls(
             **base_fields,
+            star_dir=star_dir,
             index_dir=index_dir,
+            star_index_dir=star_index_dir,
+            kb_onlist = kb_onlist,
             index_file=index_dir / "index.idx",
+            bed_file=index_dir / "ref.bed",
+            hk_genes_file=index_dir / "hk_genes.txt",
+            hk_bed_file=index_dir / "hk_ref.bed",
             t2g_file=index_dir / "t2g.txt",
             cdna_file=index_dir / "cdna.txt",
             nascent_file=index_dir / "nascent.txt",
             cdna_fasta_file=index_dir / "cdna.fasta",
             nascent_fasta_file=index_dir / "nascent.fasta",
             genome_file=index_dir / "ref.fa.gz",
-            gtf_file=index_dir / "ref.gtf",
+            gtf_file=index_dir / "ref.gtf.gz",
+            plot_dir=plot_dir
         )
 
     def directories(self) -> list[Path]:
-        return super().directories() + [self.index_dir]
+        return super().directories() + [self.index_dir, self.star_dir, self.star_index_dir, self.plot_dir]
 
 
 @dataclass(frozen=True)
@@ -230,7 +270,6 @@ class ParsePaths(TenXPaths):
     randO_barcodes: Path
     parse_keep_file: Path
     randOpolyT_keep_file: Path
-    kb_onlist: Path
     kb_replace_config: Path
 
     # barcode-split FASTQ paths
@@ -252,6 +291,7 @@ class ParsePaths(TenXPaths):
         sampled_dir = ten_x.sampled_dir
 
         ten_x_fields = {f.name: getattr(ten_x, f.name) for f in fields(ten_x)}
+        ten_x_fields["kb_onlist"] = ten_x.config_dir / "onlist.txt"
         # Parse multiplexes under a generic name, not the assay name
         ten_x_fields["multiplexed_files"] = [processed_dir / f"multiplexed_{i}.fastq.gz" for i in range(2)]
 
@@ -262,7 +302,6 @@ class ParsePaths(TenXPaths):
             randO_barcodes=configs_dir / "r1_R.txt",
             parse_keep_file=configs_dir / "parse_keep.txt",
             randOpolyT_keep_file=configs_dir / "randOpolyT_keep.txt",
-            kb_onlist=configs_dir / "onlist.txt",
             kb_replace_config=configs_dir / "replace.txt",
             filtered_files=[processed_dir / f"{assay}_{i}.fastq.gz" for i in range(2)],
             polyT_files=[processed_dir / f"polyT_{i}.fastq.gz" for i in range(2)],

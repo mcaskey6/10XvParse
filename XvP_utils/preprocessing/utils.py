@@ -21,7 +21,16 @@ def get_reference(
     logger.info("Downloading genome reference files")
     io.download_file(genome_url, genome_file, logger)
     io.download_file(gtf_url, gtf_file, logger)
-
+    
+    logger.debug("Unzipping genome GTF and FASTA files for STAR")
+    io.run_command(
+        ["gunzip", "-k", str(genome_file)],
+        logger=logger
+    )
+    io.run_command(
+        ["gunzip", "-k", str(gtf_file)],
+        logger=logger
+    )
 
 def prefetch_one_sra(srr: str, paths: BasePaths, logger: logging.Logger) -> None:
     """Download one SRA file with prefetch."""
@@ -469,7 +478,7 @@ def download_era_fastq(
 
 def make_barnyard_reference(
     paths: TenXPaths,
-    config: AnalysisConfig,
+    index_config,
     logger: logging.Logger,
 ) -> None:
     '''Build a barnyard (dual-species) genome reference.
@@ -477,12 +486,12 @@ def make_barnyard_reference(
     Downloads both species' FASTA and GTF files, prefixes chromosome names and
     gene identifiers with the species label (e.g. HUMAN_, MOUSE_), then
     concatenates into a single index-ready pair at paths.genome_file / paths.gtf_file.
-    The species field in config must be formatted as "{sp1}_{sp2}" (e.g. "human_mouse").
+    The species field in index_config must be formatted as "{sp1}_{sp2}" (e.g. "human_mouse").
     '''
-    if not config.genome_url_2:
-        raise ValueError("make_barnyard_reference requires genome_url_2 and gtf_url_2 in AnalysisConfig")
+    if not index_config.fasta_url_2:
+        raise ValueError("make_barnyard_reference requires fasta_url_2 and gtf_url_2 in IndexConfig")
 
-    sp1, sp2 = config.species.split("_", 1)
+    sp1, sp2 = index_config.species.split("_", 1)
     prefix_1, prefix_2 = sp1.upper(), sp2.upper()
 
     tmp = paths.tmp_dir
@@ -492,12 +501,12 @@ def make_barnyard_reference(
     gtf_2 = tmp / f"{sp2}.gtf.gz"
 
     logger.info("Downloading %s reference", sp1)
-    io.download_file(config.genome_url, fa_1, logger)
-    io.download_file(config.gtf_url, gtf_1, logger)
+    io.download_file(index_config.fasta_url, fa_1, logger)
+    io.download_file(index_config.gtf_url, gtf_1, logger)
 
     logger.info("Downloading %s reference", sp2)
-    io.download_file(config.genome_url_2, fa_2, logger)
-    io.download_file(config.gtf_url_2, gtf_2, logger)
+    io.download_file(index_config.fasta_url_2, fa_2, logger)
+    io.download_file(index_config.gtf_url_2, gtf_2, logger)
 
     logger.info("Building combined barnyard FASTA")
     with gzip.open(paths.genome_file, "wt") as out:
@@ -620,5 +629,266 @@ def local_pipeline(
         raise FileNotFoundError(f"Local library files missing: {missing}")
     _multiplex_into_fastq(settings, paths, libraries, logger)
 
+def run_star_10x(
+    paths: TenXPaths,
+    settings: RunSettings,
+    assay: str,
+    logger: logging.Logger,
+    tag: str = None,
+    overwrite: bool = False,
+) -> str:
+    '''Run STARsolo on 10X data to generate a BAM file for downstream 
+    gene body coverage analysis. Returns the outfile prefix.
     
+    Optional tag prefix for analyses with multiple dataset combinations.'''
 
+    if tag:
+        sampled_dir = paths.fasta_dir / f"Sampled_{tag}"
+        sampled_files = [sampled_dir / f"{assay}_{i}.fastq.gz" for i in range(2)]
+        outfile_prefix = str(paths.star_dir / tag) + "/"
+    else:
+        sampled_files = paths.sampled_files
+        outfile_prefix = str(paths.star_dir) + "/"
+
+    if not (paths.star_index_dir / "genomeParameters.txt").is_file():
+        logger.info("Building STAR index")
+        io.run_command(
+            [
+                "STAR",
+                "--runThreadN", str(settings.threads),
+                "--runMode", "genomeGenerate",
+                "--genomeDir", str(paths.star_index_dir),
+                "--genomeFastaFiles", str(paths.genome_file).removesuffix(".gz"),
+                "--sjdbGTFfile", str(paths.gtf_file).removesuffix(".gz"),
+            ],
+            logger
+        )
+    else:
+        logger.info("STAR index already exists. Skipping index build.")
+
+    output = Path(outfile_prefix + "Aligned.sortedByCoord.out.bam")
+    if not output.is_file() or not output.stat().st_size > 0 or overwrite:
+        logger.info("Running STARsolo for %s", assay)
+        io.run_command(
+            [
+                "STAR",
+                "--soloType", "CB_UMI_Simple",
+                "--soloCBwhitelist", str(paths.kb_onlist),
+                "--soloBarcodeReadLength", "0",
+                "--runThreadN", str(settings.threads),
+                "--genomeDir", str(paths.star_index_dir),
+                "--outFileNamePrefix", outfile_prefix,
+                "--readFilesIn", str(sampled_files[1]), str(sampled_files[0]),
+                "--readFilesCommand", "zcat",
+                "--outSAMtype", "BAM", "SortedByCoordinate",
+            ],
+            logger
+        )
+    else:
+        logger.info("Output BAM already for %s exists. Skipping alignment with STAR.", assay)
+
+    return outfile_prefix
+
+def run_star_parse(
+    paths: ParsePaths,
+    config: AnalysisConfig,
+    settings: RunSettings,
+    assay: str,
+    fastq_files: list[Path],
+    tag: str,
+    logger: logging.Logger,
+    overwrite: bool = False,
+) -> str:
+    '''Run STARsolo (CB_UMI_Complex) on Parse data to generate a BAM for downstream 
+    gene body coverage analysis.
+
+    Call once per read subset, passing the appropriate fastq_files and a tag that becomes
+    the filename prefix (e.g. "all", "polyT", "randO"). Returns the outfile prefix
+    '''
+    from . import parse_config as pc
+
+    if not (paths.star_index_dir / "genomeParameters.txt").is_file():
+        logger.info("Building STAR index")
+        io.run_command(
+            [
+                "STAR",
+                "--runThreadN", str(settings.threads),
+                "--runMode", "genomeGenerate",
+                "--genomeDir", str(paths.star_index_dir),
+                "--genomeFastaFiles", str(paths.genome_file).removesuffix(".gz"),
+                "--sjdbGTFfile", str(paths.gtf_file).removesuffix(".gz"),
+            ],
+            logger
+        )
+    else:
+        logger.info("STAR index already exists. Skipping index build.")
+
+    x_string = pc.generate_parse_configs(
+        config.technology,
+        paths.parse_info_dir,
+        paths.config_dir / config.name / assay,
+        config.wells or None,
+        logger,
+    )
+    cb_positions, umi_position = pc.x_string_to_star_params(x_string)
+    configs_dir = paths.config_dir / config.name / assay
+
+    outfile_prefix = str(paths.star_dir) + f"/{tag}_"
+
+    output = Path(outfile_prefix + "Aligned.sortedByCoord.out.bam")
+    if not output.is_file() or not output.stat().st_size > 0 or overwrite:
+        logger.info("Running STARsolo for %s [%s]", assay, tag)
+        io.run_command(
+            [
+                "STAR",
+                "--soloType", "CB_UMI_Complex",
+                "--soloCBwhitelist",
+                str(configs_dir / "star_bc3.txt"),
+                str(configs_dir / "star_bc2.txt"),
+                str(configs_dir / "star_bc1.txt"),
+                "--soloCBposition", *cb_positions,
+                "--soloUMIposition", umi_position,
+                "--soloBarcodeReadLength", "0",
+                "--runThreadN", str(settings.threads),
+                "--genomeDir", str(paths.star_index_dir),
+                "--outFileNamePrefix", outfile_prefix,
+                "--readFilesIn", str(fastq_files[0]), str(fastq_files[1]),
+                "--readFilesCommand", "zcat",
+                "--soloCBmatchWLtype", "1MM",
+                "--outSAMtype", "BAM", "SortedByCoordinate",
+            ],
+            logger
+        )
+    else:
+        logger.info("Output BAM for %s [%s] already exists. Skipping alignment with STAR.", assay, tag)
+
+    return outfile_prefix
+
+def download_hk_genes(
+    hk_genes_file: Path,
+    hrt_atlas_url: str,
+    logger: logging.Logger,
+    hrt_atlas_url_2: str = None,
+) -> None:
+    """Download HRT Atlas housekeeping transcript IDs and cache to hk_genes_file.
+
+    Accepts one URL (single-species) or two (barnyard). The CSV files use either
+    ',' or ';' as delimiter; transcript IDs are always in column 0. Version suffixes
+    are stripped so IDs match gffread BED output.
+    """
+    if hk_genes_file.is_file():
+        return
+
+    import requests
+
+    ids: set[str] = set()
+    for url in filter(None, [hrt_atlas_url, hrt_atlas_url_2]):
+        logger.info("Downloading HRT Atlas housekeeping gene list from %s", url)
+        response = requests.get(url, timeout=60)
+        response.raise_for_status()
+        text = response.text
+        sep = ";" if ";" in text.splitlines()[0] else ","
+        for line in text.splitlines()[1:]:
+            if line:
+                tid = line.split(sep)[0].strip().split(".")[0]
+                if tid:
+                    ids.add(tid)
+
+    with open(hk_genes_file, "w") as f:
+        for tid in sorted(ids):
+            f.write(tid + "\n")
+
+    logger.info("Cached %d housekeeping transcript IDs to %s", len(ids), hk_genes_file)
+
+
+def filter_bed_to_housekeeping(
+    bed_file: Path,
+    hk_genes_file: Path,
+    hk_bed_file: Path,
+    logger: logging.Logger,
+) -> None:
+    """Subset a gffread BED12 file to transcripts in the HRT Atlas housekeeping list.
+
+    Matches on column 4 (transcript ID), stripping any HUMAN_/MOUSE_ barnyard prefix
+    and version suffix before lookup.
+    """
+    hk_ids: set[str] = set()
+    with open(hk_genes_file) as f:
+        for line in f:
+            hk_ids.add(line.strip())
+
+    total = kept = 0
+    with open(bed_file) as f_in, open(hk_bed_file, "w") as f_out:
+        for line in f_in:
+            total += 1
+            cols = line.split("\t")
+            if len(cols) > 3:
+                tid = cols[3]
+                for prefix in ("HUMAN_", "MOUSE_"):
+                    if tid.startswith(prefix):
+                        tid = tid[len(prefix):]
+                        break
+                tid = tid.split(".")[0]
+                if tid in hk_ids:
+                    f_out.write(line)
+                    kept += 1
+
+    logger.info("Filtered BED to %d/%d housekeeping transcripts", kept, total)
+
+
+def generate_genebody_plot(
+    settings: RunSettings,
+    gtf_file: Path,
+    bed_file: Path,
+    bam_files: list[Path],
+    gene_body_dir: Path,
+    logger: logging.Logger,
+    hk_genes_file: Path = None,
+    hrt_atlas_url: str = None,
+    hrt_atlas_url_2: str = None,
+    hk_bed_file: Path = None,
+    tag: str = None,
+) -> None:
+    """From the STARsolo generated BAM files generate a genebody coverage plot
+    with geneBody_coverage.py from RSeQC.
+
+    When hk_bed_file is provided along with hrt_atlas_url, the coverage plot is
+    restricted to HRT Atlas housekeeping transcripts, which is much faster than
+    running on the full genome BED.
+
+    The tag field is used for analyses with multiple combinations of datasets to
+    specify the particular set of datasets compared.
+    """
+    logger.info("Generating BED file from GTF")
+    if not bed_file.is_file() or settings.overwrite:
+        with open(bed_file, "w") as bed_out:
+            subprocess.run(
+                ["gffread", str(gtf_file).removesuffix(".gz"), "--bed"],
+                stdout=bed_out,
+                check=True,
+            )
+
+    if hk_bed_file is not None and hrt_atlas_url:
+        download_hk_genes(hk_genes_file, hrt_atlas_url, logger, hrt_atlas_url_2)
+        if not hk_bed_file.is_file() or settings.overwrite:
+            filter_bed_to_housekeeping(bed_file, hk_genes_file, hk_bed_file, logger)
+        bed_file = hk_bed_file
+
+    for bam in bam_files:
+        if not Path(str(bam) + ".bai").is_file() or settings.overwrite:
+            io.run_command(["samtools", "index", str(bam)], logger=logger)
+
+    if not tag:
+        outdir = str(gene_body_dir) + "/"
+    else:
+        outdir = str(gene_body_dir) + f"/{tag}"
+
+    io.run_command(
+        [
+            "geneBody_coverage.py",
+            "-r", str(bed_file),
+            "-i", f"{bam_files[0]},{bam_files[1]},{bam_files[2]},{bam_files[3]}",
+            "-o", outdir
+        ],
+        logger=logger,
+    )

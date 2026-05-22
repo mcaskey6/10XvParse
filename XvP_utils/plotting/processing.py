@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any
+import re
 import anndata as ad
 import scanpy as sc
 import numpy as np
@@ -7,7 +7,6 @@ import json
 import subprocess
 import os
 from Bio import SeqIO
-from pybiomart import Server
 import scrublet as scr
 import statsmodels.api as sm
 from scipy.stats import gaussian_kde
@@ -134,33 +133,45 @@ def upsample(datasets: list[ad.AnnData], output_dir: Path, overwrite: bool = Fal
         print("PreSeq output already exists for all datasets.")
 
 
-def _query_biotype(dataset: Any) -> pd.DataFrame:
-    """Query Ensembl for gene biotype annotations.
+def _biotype_from_gtf(gtf_path: Path) -> pd.DataFrame:
+    """Extract gene biotype annotations from a GTF file.
 
-    Retrieves transcript biotypes and converts them to boolean indicator columns
-    for lncRNA, protein-coding, mitochondrial, and ribosomal genes.
+    Reads gene-level rows only and converts gene_biotype to boolean indicator
+    columns for lncRNA, protein-coding, mitochondrial, and ribosomal genes.
 
     Args:
-        dataset: pybiomart Dataset object connected to an Ensembl mart.
+        gtf_path: Path to the GTF file (plain text or .gz not supported here).
 
     Returns:
         DataFrame with columns 'gene_name', 'gene_id', 'is_lnc', 'is_pc',
-        'is_mito', and 'is_ribo'.
+        'is_mito', and 'is_ribo'. gene_id includes the version suffix (e.g.
+        ENSMUSG00000104478.2) to match the t2g.txt format.
     """
-    type_result = dataset.query(attributes=[
-        'external_gene_name',
-        'ensembl_gene_id_version',
-        'transcript_biotype'])
+    _attr = re.compile(r'(\w+) "([^"]+)"')
+    records = []
+    with open(gtf_path, 'r') as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+            fields = line.rstrip('\n').split('\t')
+            if fields[2] != 'gene':
+                continue
+            attrs = dict(_attr.findall(fields[8]))
+            gene_id = attrs.get('gene_id', '')
+            version = attrs.get('gene_version', '')
+            gene_name = attrs.get('gene_name', gene_id)
+            biotype = attrs.get('gene_biotype', '')
+            if version:
+                gene_id = f"{gene_id}.{version}"
+            records.append({'gene_name': gene_name, 'gene_id': gene_id, 'gene_biotype': biotype})
 
-    type_result.columns = ['gene_name', 'gene_id', 'gene_type']
-
-    type_result['is_lnc'] = (type_result['gene_type'] == 'lncRNA')
-    type_result['is_pc'] = (type_result['gene_type'] == 'protein_coding')
-    type_result['is_mito'] = type_result['gene_name'].str.startswith(("mt-", "MT-", "MOUSE_mt-", "HUMAN_MT-"))
-    type_result['is_ribo'] = type_result['gene_name'].str.startswith(("Rps", "Rpl", "RPS", "RPL", "MOUSE_Rps", "MOUSE_Rpl", "HUMAN_RPS", "HUMAN_RPL"))
-
-    type_result.drop('gene_type', axis=1, inplace=True)
-    return type_result
+    df = pd.DataFrame(records)
+    df['is_lnc'] = df['gene_biotype'] == 'lncRNA'
+    df['is_pc'] = df['gene_biotype'] == 'protein_coding'
+    df['is_mito'] = df['gene_name'].str.startswith(("mt-", "MT-", "MOUSE_mt-", "HUMAN_MT-"))
+    df['is_ribo'] = df['gene_name'].str.startswith(("Rps", "Rpl", "RPS", "RPL", "MOUSE_Rps", "MOUSE_Rpl", "HUMAN_RPS", "HUMAN_RPL"))
+    df.drop('gene_biotype', axis=1, inplace=True)
+    return df
 
 
 def _query_from_fasta(cdna_fasta: Path, t2g: Path) -> pd.DataFrame:
@@ -194,22 +205,21 @@ def _query_from_fasta(cdna_fasta: Path, t2g: Path) -> pd.DataFrame:
     return t2g_df.groupby(["gene_id", "gene_name"])[["gene_length", "gc_content"]].mean().reset_index()
 
 
-def query_ensembl(dir: Path, species: str, index_dir: Path, overwrite: bool = False) -> pd.DataFrame:
+def query_ensembl(dir: Path, index_dir: Path, overwrite: bool = False) -> pd.DataFrame:
     """Retrieve and cache gene annotations (biotype, length, GC content).
 
-    Biotype is queried from Ensembl via pybiomart. Length and GC content are
+    Biotype is read from the GTF file in index_dir. Length and GC content are
     computed directly from the kb-python cDNA FASTA, guaranteeing complete
     coverage for every gene in the kallisto index.
 
     If a cached CSV already exists at <dir>/gene_data/gene_attributes.csv and
-    overwrite is False, the cached file is returned without querying the server.
+    overwrite is False, the cached file is returned without re-reading.
 
     Args:
         dir: Base directory under which gene_data/ is created.
-        species: Ensembl species prefix used to select the gene dataset
-            (e.g. 'hsapiens' or 'mmusculus').
-        index_dir: Path to the kb-python kallisto index directory containing cdna.fasta and t2g.txt.
-        overwrite: If True, re-queries even when the cache file exists.
+        index_dir: Path to the kb-python kallisto index directory containing
+            ref.gtf, cdna.fasta, and t2g.txt.
+        overwrite: If True, re-reads even when the cache file exists.
 
     Returns:
         DataFrame with columns 'gene_id', 'gene_name', 'gene_length', 'gc_content',
@@ -223,11 +233,7 @@ def query_ensembl(dir: Path, species: str, index_dir: Path, overwrite: bool = Fa
     if os.path.exists(path) and not overwrite:
         gene_info = pd.read_csv(path, index_col=[0])
     else:
-        server = Server(host='http://ensembl.org')
-        dataset = server.marts['ENSEMBL_MART_ENSEMBL'] \
-                        .datasets[f"{species}_gene_ensembl"]
-
-        type_result = _query_biotype(dataset)
+        type_result = _biotype_from_gtf(index_dir / "ref.gtf")
         fasta_result = _query_from_fasta(index_dir / "cdna.fasta", index_dir / "t2g.txt")
 
         gene_info = pd.merge(fasta_result, type_result, on=['gene_name', 'gene_id'])
@@ -242,12 +248,13 @@ def query_ensembl_combined(dir: Path, index_dir: Path, overwrite: bool = False) 
 
     Length and GC content are computed from the combined kb-python cDNA FASTA
     (which already contains HUMAN_/MOUSE_ prefixes). Biotype annotations are
-    queried from Ensembl for each species separately and prefixed to match.
+    read from the combined ref.gtf, which also carries HUMAN_/MOUSE_ prefixes.
 
     Args:
         dir: Base directory under which gene_data/ is created.
-        index_dir: Path to the combined kb-python kallisto index directory containing cdna.fasta and t2g.txt.
-        overwrite: If True, re-queries even when the cache file exists.
+        index_dir: Path to the combined kb-python kallisto index directory containing
+            ref.gtf, cdna.fasta, and t2g.txt.
+        overwrite: If True, re-reads even when the cache file exists.
 
     Returns:
         DataFrame with columns 'gene_id', 'gene_name', 'gene_length', 'gc_content',
@@ -262,18 +269,9 @@ def query_ensembl_combined(dir: Path, index_dir: Path, overwrite: bool = False) 
         return pd.read_csv(path, index_col=[0])
 
     fasta_result = _query_from_fasta(index_dir / "cdna.fasta", index_dir / "t2g.txt")
+    type_result = _biotype_from_gtf(index_dir / "ref.gtf")
 
-    server = Server(host='http://ensembl.org')
-    type_results = []
-    for species, prefix in [("mmusculus", "MOUSE_"), ("hsapiens", "HUMAN_")]:
-        dataset = server.marts['ENSEMBL_MART_ENSEMBL'].datasets[f"{species}_gene_ensembl"]
-        type_result = _query_biotype(dataset)
-        type_result['gene_name'] = prefix + type_result['gene_name']
-        type_result['gene_id'] = prefix + type_result['gene_id']
-        type_results.append(type_result)
-
-    type_combined = pd.concat(type_results, ignore_index=True)
-    combined = pd.merge(fasta_result, type_combined, on=['gene_name', 'gene_id'])
+    combined = pd.merge(fasta_result, type_result, on=['gene_name', 'gene_id'])
     combined.drop_duplicates(subset=['gene_name', 'gene_id'], inplace=True)
     combined.to_csv(path)
     return combined
