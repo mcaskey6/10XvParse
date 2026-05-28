@@ -154,6 +154,7 @@ def filter_parse_fastqs(
     paths: ParsePaths,
     threads: int,
     logger: logging.Logger,
+    bc1_location: str = "1,78,86",
 ) -> None:
     '''Filter out reads that do not have the expected barcodes with splitcode'''
 
@@ -161,8 +162,8 @@ def filter_parse_fastqs(
 
     with open(paths.parse_config, "w") as config_file:
         config_file.write("tags\tdistances\tids\tgroups\tminFindsG\tlocations\n")
-        config_file.write(str(paths.randO_barcodes) + "\t1\tr1_R\tround1\t1\t1,78,86\n")
-        config_file.write(str(paths.polyT_barcodes) + "\t1\tr1_T\tround1\t1\t1,78,86\n")
+        config_file.write(str(paths.randO_barcodes) + f"\t1\tr1_R\tround1\t1\t{bc1_location}\n")
+        config_file.write(str(paths.polyT_barcodes) + f"\t1\tr1_T\tround1\t1\t{bc1_location}\n")
 
     with open(paths.parse_keep_file, "w") as keep_file:
         keep_file.write(f"round1 {str(paths.filtered_files[0]).split('_0')[0]}")
@@ -629,6 +630,16 @@ def local_pipeline(
         raise FileNotFoundError(f"Local library files missing: {missing}")
     _multiplex_into_fastq(settings, paths, libraries, logger)
 
+def count_reads(fastq_gz: Path) -> int:
+    '''Count reads in a gzipped FASTQ by dividing line count by 4.'''
+    zcat = subprocess.Popen(["zcat", str(fastq_gz)], stdout=subprocess.PIPE)
+    wc = subprocess.Popen(["wc", "-l"], stdin=zcat.stdout, stdout=subprocess.PIPE)
+    assert zcat.stdout is not None
+    zcat.stdout.close()
+    out, _ = wc.communicate()
+    zcat.wait()
+    return int(out.strip()) // 4
+
 def run_star_10x(
     paths: TenXPaths,
     settings: RunSettings,
@@ -645,10 +656,10 @@ def run_star_10x(
     if tag:
         sampled_dir = paths.fasta_dir / f"Sampled_{tag}"
         sampled_files = [sampled_dir / f"{assay}_{i}.fastq.gz" for i in range(2)]
-        outfile_prefix = str(paths.star_dir / tag) + "/"
+        outfile_prefix = str(paths.star_dir / tag) + "/10x_"
     else:
         sampled_files = paths.sampled_files
-        outfile_prefix = str(paths.star_dir) + "/"
+        outfile_prefix = str(paths.star_dir) + "/10x_"
 
     if not (paths.star_index_dir / "genomeParameters.txt").is_file():
         logger.info("Building STAR index")

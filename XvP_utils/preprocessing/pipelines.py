@@ -95,6 +95,7 @@ def load_parse(settings: RunSettings, config_file: str, assay: str, logger: logg
         wells=config.wells or None,
         logger=logger,
     )
+    bc1_location = parse_config.x_string_to_bc1_location(x_string)
 
     index_config = _load_index_config(settings, config)
     _download_reference(settings, paths, index_config, logger)
@@ -105,7 +106,8 @@ def load_parse(settings: RunSettings, config_file: str, assay: str, logger: logg
         utils.filter_parse_fastqs(
             paths=paths,
             threads=settings.threads,
-            logger=logger
+            logger=logger,
+            bc1_location=bc1_location,
         )
 
     # Split parse FASTQ into polyT and randO files
@@ -220,7 +222,7 @@ def subsample_10x(settings: RunSettings, config_file: str, assay: str, subsample
     if tag:
         sampled_dir = paths.fasta_dir / f"Sampled_{tag}"
         sampled_files = [sampled_dir / f"{assay}_{i}.fastq.gz" for i in range(2)]
-        kb_sub_dir = paths.kb_dir / f"sampled_{tag}_out"
+        kb_sub_dir = paths.kb_dir / f"sampled_10x_{tag}_out"
         from .classes import make_dir
         make_dir(sampled_dir, logger)
         make_dir(kb_sub_dir, logger)
@@ -291,7 +293,7 @@ def get_subsample_num(
             counts[path_str] = cached[path_str]
             logger.info("%s: %d reads (cached)", path_str, counts[path_str])
         else:
-            n = utils._count_reads(path)
+            n = utils.count_reads(path)
             counts[path_str] = n
             cached[path_str] = n
             logger.info("%s: %d reads", path_str, n)
@@ -344,7 +346,7 @@ def get_genebody_plot(
             assay=parse_assay,
             fastq_files=paths_parse.filtered_files,
             logger=logger,
-            tag="all",
+            tag="parse",
             overwrite=settings.run_kb
         )
     )

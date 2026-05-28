@@ -207,6 +207,8 @@ class TenXPaths(BasePaths):
         star_index_dir = settings.root_dir / "Index" / f"{config.species}_STAR"
         kb_onlist = base.config_dir / "10x_info" / f"{config.technology}_whitelist.txt"
         base_fields = {f.name: getattr(base, f.name) for f in fields(base)}
+        base_fields["kb_all_dir"] = base.kb_dir / "10x_out"
+        base_fields["kb_sub_dir"] = base.kb_dir / "sampled_10x_out"
         plot_dir = settings.root_dir/ "Data" / config.name / "Plots"
 
         return cls(
@@ -248,6 +250,7 @@ class HashtagsPaths(BasePaths):
         index_dir = settings.root_dir / "Index" / config.name / assay
         hashtags_file = base.config_dir / config.name / assay / "hashtags.tsv"
         base_fields = {f.name: getattr(base, f.name) for f in fields(base)}
+        base_fields["kb_all_dir"] = base.kb_dir / "10x_hashtags_out"
         return cls(
             **base_fields,
             index_dir=index_dir,
@@ -291,7 +294,9 @@ class ParsePaths(TenXPaths):
         sampled_dir = ten_x.sampled_dir
 
         ten_x_fields = {f.name: getattr(ten_x, f.name) for f in fields(ten_x)}
-        ten_x_fields["kb_onlist"] = ten_x.config_dir / "onlist.txt"
+        ten_x_fields["kb_onlist"] = configs_dir / "onlist.txt"
+        ten_x_fields["kb_all_dir"] = ten_x.kb_dir / "parse_out"
+        ten_x_fields["kb_sub_dir"] = ten_x.kb_dir / "sampled_parse_out"
         # Parse multiplexes under a generic name, not the assay name
         ten_x_fields["multiplexed_files"] = [processed_dir / f"multiplexed_{i}.fastq.gz" for i in range(2)]
 

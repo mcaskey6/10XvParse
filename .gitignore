@@ -26,3 +26,4 @@
 Configs/10x_info/
 *.DS_Store
 *.egg-info/
+*.png

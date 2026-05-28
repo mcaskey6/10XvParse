@@ -13,30 +13,49 @@ from scipy.stats import gaussian_kde
 import pandas as pd
 
 
-def init_processing(data_name: str, kb_dir: Path, data_title: str = None, modified: bool = False) -> ad.AnnData:
+def init_processing(data_name: str, assay: str, project_dir: str, analysis_name: str, data_title: str = None, type: str = "", modified: bool = False) -> ad.AnnData:
     """Load a kb-python h5ad output and initialize standard metadata fields.
 
     Switches gene indices from Ensembl IDs to gene names, computes per-cell
     and per-gene summary statistics, and attaches alignment run info from
-    run_info.json.
+    kb_python's run_info.json and STARsolo's Log.final.out.
 
     Args:
         data_name: Short identifier stored in adata.uns['name'].
-        kb_dir: Path to the kb-python output directory containing run_info.json
-            and the counts_unfiltered subdirectory.
-        data_title: Human-readable label stored in adata.uns['title']. Defaults
-            to None (not set).
-        modified: If True, loads from the 'counts_unfiltered_modified' subdirectory
-            instead of 'counts_unfiltered'.
-
+        project_dir: Base directory containing the Data/ subdirectory with kb-python and STAR outputs.
+        analysis_name: Subdirectory under Data/ containing the assay-specific outputs.
+        data_title: Optional longer title stored in adata.uns['title'] for display in plots
+        sample: Optional sample identifier to distinguish different runs of the same analysis (e.g. "H2"). 
+                If provided, looks for data under assay+sample (e.g. "10x_H2") and appends sample to the 
+                name and title.
+        type: Optional string to distinguish different comparison within the same analysis (e.g. "standard", "mini")
+              If provided, looks for data under assay/type (e.g. "10x/standard").
+        modified: If True, looks for data under counts_unfiltered_modified/ instead of counts_unfiltered/.
+        
     Returns:
         AnnData object with gene names as var_names, obs columns 'n_genes' and
         'n_counts', var columns 'gene_id', 'n_cells', and 'percent_counts', and
         uns keys 'name', 'title', 'n_processed', 'n_aligned', and 'n_raw_counts'.
     """
+    def get_kb_dir(project_dir: Path, data_name: str, assay: str, type: str = None) -> Path:
+        type_string = f"_{type}" if type else ""
+        kb_dir = project_dir / "Data" / analysis_name / assay / "kb_python" / f"sampled_{data_name}{type_string}_out"
+        return kb_dir
+    
+    def get_star_dir(project_dir: Path, assay: str, type: str = None) -> Path:
+        if type is None:
+            star_dir = project_dir / "Data" / analysis_name / assay / "STARsolo"
+        else:
+            star_dir = project_dir / "Data" / analysis_name / assay / "STARsolo" / type
+        return star_dir
+
     m_string = ""
     if modified:
         m_string = "_modified"
+    
+    kb_dir = get_kb_dir(Path(project_dir), data_name, assay, type)
+    star_dir = get_star_dir(Path(project_dir), assay, type)
+
 
     counts_dir = Path.joinpath(kb_dir, f"counts_unfiltered{m_string}")
 
@@ -59,11 +78,27 @@ def init_processing(data_name: str, kb_dir: Path, data_title: str = None, modifi
         data.uns['title'] = data_title
 
     with open(Path.joinpath(kb_dir, "run_info.json"), 'r') as f:
-        run_info = json.load(f)
-        data.uns['n_processed'] = run_info['n_processed']
-        data.uns['n_aligned'] = run_info['n_pseudoaligned']
-        data.uns['n_unique'] = run_info['n_unique']
+        kb_run_info = json.load(f)
+    data.uns['n_processed'] = kb_run_info['n_processed']
+    data.uns['n_aligned'] = kb_run_info['n_pseudoaligned']
+    data.uns['n_unique'] = kb_run_info['n_unique']
     data.uns['n_raw_counts'] = data.X.sum()
+
+    with open(Path.joinpath(star_dir, f"{data_name}_Log.final.out"), 'r') as f:
+        star_dict = {}
+        for line in f:
+            line = line.strip()
+            if not "|" in line:
+                continue
+            key, value = [part.strip() for part in line.split("|", 1)]
+            star_dict[key] = value
+    data.uns['star_uniquely_mapped'] = int(star_dict.get("Uniquely mapped reads number"))
+    data.uns['star_multimapped'] = int(star_dict.get("Number of reads mapped to multiple loci")) \
+                                    + int(star_dict.get("Number of reads mapped to too many loci"))
+    data.uns['star_unmapped'] = int(star_dict.get("Number of input reads")) \
+                                - int(data.uns['star_uniquely_mapped']) \
+                                - int(data.uns['star_multimapped'])
+
 
     sc.pp.filter_genes(data, min_cells=1)
     sc.pp.filter_cells(data, min_genes=1)

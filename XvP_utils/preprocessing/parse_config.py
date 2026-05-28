@@ -120,6 +120,19 @@ def generate_parse_configs(
     return kit_info["x_string"]
 
 
+def x_string_to_bc1_location(x_string: str) -> str:
+    """Return the splitcode location string for the bc1 (RT) barcode.
+
+    Extracts the last barcode's (file_idx, start, end) from the x_string and
+    formats it as '{file_idx},{start},{end}' for use in splitcode config files.
+    File index is 0-based in both the x_string and splitcode location format.
+    """
+    bc_part = x_string.split(":")[0]
+    nums = [int(n) for n in bc_part.split(",")]
+    bc1_file, bc1_start, bc1_end = nums[-3], nums[-2], nums[-1]
+    return f"{bc1_file},{bc1_start},{bc1_end}"
+
+
 def x_string_to_star_params(x_string: str) -> tuple[list[str], str]:
     """Return (cb_positions, umi_position) for STARsolo CB_UMI_Complex.
 
