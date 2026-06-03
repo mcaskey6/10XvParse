@@ -13,7 +13,7 @@ from scipy.stats import gaussian_kde
 import pandas as pd
 
 
-def init_processing(data_name: str, assay: str, project_dir: str, analysis_name: str, data_title: str = None, type: str = "", modified: bool = False) -> ad.AnnData:
+def init_processing(data_name: str, assay: str, project_dir: str, analysis_name: str, data_title: str = None, type: str = "", modified: bool = False, sampled: bool = True) -> ad.AnnData:
     """Load a kb-python h5ad output and initialize standard metadata fields.
 
     Switches gene indices from Ensembl IDs to gene names, computes per-cell
@@ -31,6 +31,8 @@ def init_processing(data_name: str, assay: str, project_dir: str, analysis_name:
         type: Optional string to distinguish different comparison within the same analysis (e.g. "standard", "mini")
               If provided, looks for data under assay/type (e.g. "10x/standard").
         modified: If True, looks for data under counts_unfiltered_modified/ instead of counts_unfiltered/.
+        sampled: If True, looks for data under sampled_{data_name}_out/ instead of {data_name}_out/. 
+                 This is used to distinguish the downsampled datasets from the full datasets.
         
     Returns:
         AnnData object with gene names as var_names, obs columns 'n_genes' and
@@ -39,7 +41,10 @@ def init_processing(data_name: str, assay: str, project_dir: str, analysis_name:
     """
     def get_kb_dir(project_dir: Path, data_name: str, assay: str, type: str = None) -> Path:
         type_string = f"_{type}" if type else ""
-        kb_dir = project_dir / "Data" / analysis_name / assay / "kb_python" / f"sampled_{data_name}{type_string}_out"
+        if sampled:
+            kb_dir = project_dir / "Data" / analysis_name / assay / "kb_python" / f"sampled_{data_name}{type_string}_out"
+        else:
+            kb_dir = project_dir / "Data" / analysis_name / assay / "kb_python" / f"{data_name}_out"
         return kb_dir
     
     def get_star_dir(project_dir: Path, assay: str, type: str = None) -> Path:
@@ -106,12 +111,14 @@ def init_processing(data_name: str, assay: str, project_dir: str, analysis_name:
     return data
 
 
-def refilter(raw_data: ad.AnnData, min_counts: int) -> ad.AnnData:
+def refilter(raw_data: ad.AnnData, min_counts: int, transform: bool = False) -> ad.AnnData:
     """Filter cells by a minimum UMI count threshold and recompute metadata.
 
     Args:
         raw_data: AnnData object to filter (not modified in place).
         min_counts: Minimum number of UMI counts required to retain a cell.
+        transform: If True, recompute the X matrix as log-CPM (log1p of counts per million)
+                   after filtering.
 
     Returns:
         Filtered copy of raw_data with updated 'n_genes', 'n_counts',
@@ -119,6 +126,11 @@ def refilter(raw_data: ad.AnnData, min_counts: int) -> ad.AnnData:
     """
     data = raw_data.copy()
     sc.pp.filter_cells(data, min_counts=min_counts)
+    sc.pp.filter_genes(data, min_cells=1)
+    if transform:
+        sc.pp.normalize_total(data, target_sum=1e6, exclude_highly_expressed=True)
+        sc.pp.log1p(data)
+        print("Applied CPM normalization and log1p transformation to the filtered data.")
     data.obs['n_genes'] = data.X.astype(bool).sum(axis=1).A1
     data.var['n_cells'] = data.X.astype(bool).sum(axis=0).A1
     data.obs['n_counts'] = data.X.sum(axis=1).A1
@@ -204,7 +216,22 @@ def _biotype_from_gtf(gtf_path: Path) -> pd.DataFrame:
     df['is_lnc'] = df['gene_biotype'] == 'lncRNA'
     df['is_pc'] = df['gene_biotype'] == 'protein_coding'
     df['is_mito'] = df['gene_name'].str.startswith(("mt-", "MT-", "MOUSE_mt-", "HUMAN_MT-"))
-    df['is_ribo'] = df['gene_name'].str.startswith(("Rps", "Rpl", "RPS", "RPL", "MOUSE_Rps", "MOUSE_Rpl", "HUMAN_RPS", "HUMAN_RPL"))
+    df['is_ribo'] = df['gene_name'].str.startswith((
+        "Rps", "Rpl", "Mrps", "Mrpl",
+        "RPS", "RPL", "MRPS", "MRPL",
+        "MOUSE_Rps", "MOUSE_Rpl", "MOUSE_Mrps", "MOUSE_Mrpl",
+        "HUMAN_RPS", "HUMAN_RPL", "HUMAN_MRPS", "HUMAN_MRPL",
+    ))
+    df['is_oxphos'] = df['gene_name'].str.startswith((
+        "Sdh",  "Uqcr", "Cox",  "Nduf", "Atp",
+        "SDH",  "UQCR", "COX",  "NDUF", "ATP",
+        "MOUSE_Sdh",  "MOUSE_Uqcr", "MOUSE_Cox",  "MOUSE_Nduf", "MOUSE_Atp",
+        "HUMAN_SDH",  "HUMAN_UQCR", "HUMAN_COX",  "HUMAN_NDUF", "HUMAN_ATP",
+        "mt-Nd", "mt-Co", "mt-Atp", "mt-Cytb",
+        "MT-ND", "MT-CO", "MT-ATP", "MT-CYB",
+        "MOUSE_mt-Nd", "MOUSE_mt-Co", "MOUSE_mt-Atp", "MOUSE_mt-Cytb",
+        "HUMAN_MT-ND", "HUMAN_MT-CO", "HUMAN_MT-ATP", "HUMAN_MT-CYB",
+    ))
     df.drop('gene_biotype', axis=1, inplace=True)
     return df
 
@@ -327,6 +354,7 @@ def add_cell_metrics(data: ad.AnnData, gene_info: pd.DataFrame) -> None:
     pc_result = gene_info["gene_id"][gene_info['is_pc']].tolist()
     mito_result = gene_info["gene_id"][gene_info['is_mito']].tolist()
     ribo_result = gene_info["gene_id"][gene_info['is_ribo']].tolist()
+    oxphos_result = gene_info["gene_id"][gene_info['is_oxphos']].tolist()
     gene_lengths = gene_info[['gene_id', 'gene_length']].drop_duplicates()
     gc_content = gene_info[['gene_id', 'gc_content']].drop_duplicates()
 
@@ -334,6 +362,7 @@ def add_cell_metrics(data: ad.AnnData, gene_info: pd.DataFrame) -> None:
     pc_genes = set(data.var["gene_id"].tolist()).intersection(set(pc_result))
     mito_genes = set(data.var["gene_id"].tolist()).intersection(set(mito_result))
     ribo_genes = set(data.var["gene_id"].tolist()).intersection(set(ribo_result))
+    oxphos_genes = set(data.var["gene_id"].tolist()).intersection(set(oxphos_result))
 
     data.var["is_lnc"] = np.full(len(data.var_names), False)
     data.var.loc[data.var["gene_id"].isin(list(lncRNA_genes)), ["is_lnc"]] = True
@@ -346,6 +375,9 @@ def add_cell_metrics(data: ad.AnnData, gene_info: pd.DataFrame) -> None:
 
     data.var["is_ribo"] = np.full(len(data.var_names), False)
     data.var.loc[data.var["gene_id"].isin(list(ribo_genes)), ["is_ribo"]] = True
+
+    data.var["is_oxphos"] = np.full(len(data.var_names), False)
+    data.var.loc[data.var["gene_id"].isin(list(oxphos_genes)), ["is_oxphos"]] = True
     
     pc_counts = data[:, data.var['is_pc']].X.sum(axis=1)
     mito_counts = data[:, data.var['is_mito']].X.sum(axis=1)
@@ -463,7 +495,7 @@ def export_bulk_counts(datasets: list[ad.AnnData], sample: str = None):
     print(f"\tparse{sample_str} total counts: {bulk_parse_df['parse'].sum():,}  ({datasets[3].n_obs:,} cells)")
 
 
-def compare_genes(data_x: ad.AnnData, data_y: ad.AnnData) -> pd.DataFrame:
+def compare_genes(data_x: ad.AnnData, data_y: ad.AnnData, lim: float, comparison_axis: str="percent_counts") -> pd.DataFrame:
     """Compare gene percent counts between two datasets and compute Cook's distance.
 
     Merges var DataFrames on shared gene identifiers, fits an OLS regression of
@@ -473,9 +505,10 @@ def compare_genes(data_x: ad.AnnData, data_y: ad.AnnData) -> pd.DataFrame:
     Args:
         data_x: AnnData object for the x-axis dataset.
         data_y: AnnData object for the y-axis dataset.
+        lim: Maximum percent counts value to include in the regression.
 
     Returns:
-        DataFrame with columns 'percent_counts_x', 'percent_counts_y',
+        DataFrame with columns "{comparison_axis}_x", "{comparison_axis}_y",
         'cooks_distance', 'point_density', and gene metadata columns. Genes
         present in only one dataset are included with 0 for the missing values.
     """
@@ -487,17 +520,18 @@ def compare_genes(data_x: ad.AnnData, data_y: ad.AnnData) -> pd.DataFrame:
 
     shared_data = pd.merge(x_var, y_var, on=['gene_name', 'gene_id', 'gene_length', 'gc_content'], how='outer')
     shared_data.fillna(0, inplace=True)
+    shared_data = shared_data[(shared_data[f"{comparison_axis}_x"] <= lim) & (shared_data[f"{comparison_axis}_y"] <= lim)]
 
-    for col in ['is_lnc', 'is_mito', 'is_ribo', 'is_pc']:
+    for col in ['is_lnc', 'is_mito', 'is_ribo', 'is_pc', 'is_oxphos']:
         shared_data[col] = shared_data[col + "_x"] | shared_data[col + "_y"]
         shared_data.drop(col + "_x", axis=1, inplace=True)
         shared_data.drop(col + "_y", axis=1, inplace=True)
 
-    model = sm.OLS(shared_data['percent_counts_y'], shared_data['percent_counts_x']).fit()
+    model = sm.OLS(shared_data[f"{comparison_axis}_y"], shared_data[f"{comparison_axis}_x"]).fit()
     np.set_printoptions(suppress=True)
     shared_data['cooks_distance'] = model.get_influence().cooks_distance[0] + 1e-10
 
-    xy = np.vstack([shared_data['percent_counts_x'].to_numpy().flatten(), shared_data['percent_counts_y'].to_numpy().flatten()])
+    xy = np.vstack([shared_data[f"{comparison_axis}_x"].to_numpy().flatten(), shared_data[f"{comparison_axis}_y"].to_numpy().flatten()])
     shared_data['point_density'] = gaussian_kde(xy)(xy)
 
     return shared_data

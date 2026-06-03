@@ -23,7 +23,7 @@ def _download_reference(settings: RunSettings, paths: TenXPaths, index_config: I
         else:
             utils.get_reference(paths.genome_file, paths.gtf_file, index_config.fasta_url, index_config.gtf_url, logger)
     else:
-        logger.info("Reference files already exist. Skipping reference download.")
+        logger.info("Reference files already exist (%s). Skipping download.", paths.genome_file)
 
 
 def _run_core_pipeline(settings: RunSettings, paths, config: AnalysisConfig, assay: str, logger: logging.Logger) -> None:
@@ -39,6 +39,7 @@ def _run_core_pipeline(settings: RunSettings, paths, config: AnalysisConfig, ass
 def load_10x(settings: RunSettings, config_file: str, assay: str, logger: logging.Logger) -> None:
     '''Get H5AD files for 10X data. Supports SRA and ERA sources, single-species and barnyard references.'''
     config = AnalysisConfig.from_yaml(config_file, assay)
+    logger.info("[%s/%s] Loading 10x data (%s, %s)", config.name, assay, config.species, config.technology)
     paths = TenXPaths.build(settings, config, assay)
     paths.ensure_dirs(logger)
 
@@ -60,6 +61,7 @@ def load_10x(settings: RunSettings, config_file: str, assay: str, logger: loggin
 def load_10x_hashtags(settings: RunSettings, config_file: str, hashtags: str, logger: logging.Logger) -> None:
     '''Get H5AD files for 10X Hashtags for Demultiplexing'''
     config = AnalysisConfig.from_yaml(config_file, hashtags)
+    logger.info("[%s/%s] Loading 10x hashtag data (%s)", config.name, hashtags, config.technology)
     paths = HashtagsPaths.build(settings, config, hashtags)
     paths.ensure_dirs(logger)
 
@@ -80,6 +82,7 @@ def load_10x_hashtags(settings: RunSettings, config_file: str, hashtags: str, lo
 def load_parse(settings: RunSettings, config_file: str, assay: str, logger: logging.Logger) -> None:
     '''Get H5AD files for Parse data. Supports SRA and ERA sources, single-species and barnyard references.'''
     config = AnalysisConfig.from_yaml(config_file, assay)
+    logger.info("[%s/%s] Loading Parse data (%s, %s)", config.name, assay, config.species, config.technology)
     paths = ParsePaths.build(settings, config, assay)
     paths.ensure_dirs(logger)
 
@@ -133,6 +136,7 @@ def load_parse(settings: RunSettings, config_file: str, assay: str, logger: logg
 def subsample_parse(settings: RunSettings, config_file: str, assay: str, subsample_num: int, logger: logging.Logger) -> None:
     '''Subsample the parse, polyT and randO FASTQ files for comparison.'''
     config = AnalysisConfig.from_yaml(config_file, assay)
+    logger.info("[%s/%s] Subsampling Parse to %d reads", config.name, assay, subsample_num)
     paths = ParsePaths.build(settings, config, assay)
     paths.ensure_dirs(logger)
 
@@ -216,6 +220,10 @@ def subsample_10x(settings: RunSettings, config_file: str, assay: str, subsample
     own FASTA/Sampled_<tag>/ directory and kb_python/sampled_<tag>_out/ directory.
     '''
     config = AnalysisConfig.from_yaml(config_file, assay)
+    if tag:
+        logger.info("[%s/%s] Subsampling 10x to %d reads (tag=%s)", config.name, assay, subsample_num, tag)
+    else:
+        logger.info("[%s/%s] Subsampling 10x to %d reads", config.name, assay, subsample_num)
     paths = TenXPaths.build(settings, config, assay)
     paths.ensure_dirs(logger)
 
@@ -320,6 +328,7 @@ def get_genebody_plot(
     star_prefixes = []
 
     config_10x = AnalysisConfig.from_yaml(config_file, tenx_assay)
+    logger.info("[%s] Generating gene body coverage (%s vs %s)", config_10x.name, tenx_assay, parse_assay)
     paths_10x = TenXPaths.build(settings, config_10x, tenx_assay)
     paths_10x.ensure_dirs(logger)
 
@@ -344,7 +353,7 @@ def get_genebody_plot(
             config=config_parse,
             settings=settings,
             assay=parse_assay,
-            fastq_files=paths_parse.filtered_files,
+            fastq_files=paths_parse.sampled_files,
             logger=logger,
             tag="parse",
             overwrite=settings.run_kb
@@ -357,7 +366,7 @@ def get_genebody_plot(
             config=config_parse,
             settings=settings,
             assay=parse_assay,
-            fastq_files=paths_parse.polyT_files,
+            fastq_files=paths_parse.sampled_polyT_files,
             logger=logger,
             tag="polyT",
             overwrite=settings.run_kb
@@ -370,7 +379,7 @@ def get_genebody_plot(
             config=config_parse,
             settings=settings,
             assay=parse_assay,
-            fastq_files=paths_parse.randO_files,
+            fastq_files=paths_parse.sampled_randO_files,
             logger=logger,
             tag="randO",
             overwrite=settings.run_kb

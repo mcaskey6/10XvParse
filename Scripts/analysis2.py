@@ -25,7 +25,7 @@ def subsample_standard(settings: RunSettings, config_file: str, logger: Logger) 
         parse_assays=["parse"],
         logger=logger,
     )
-    subsample_10x(settings, config_file, subsample_num_standard, logger, tag="standard")
+    subsample_10x(settings, config_file, "10x", subsample_num_standard, logger, tag="standard")
     subsample_parse(settings, config_file, "parse", subsample_num_standard, logger)
 
 def subsample_mini(settings: RunSettings, config_file: str, logger: Logger) -> None:
@@ -74,7 +74,7 @@ if __name__ == "__main__":
         root_dir=Path(__file__).parent.parent,
         config_name="analysis2.yaml",
         overwrite=False,
-        run_kb=False,
+        run_kb=True,
         threads=16,
         max_workers=4
     )
@@ -83,7 +83,6 @@ if __name__ == "__main__":
     os.makedirs(settings.root_dir / "Logs", exist_ok=True)
     logger = setup_logger(settings.root_dir / "Logs" / "analysis2.txt")
 
-    # load_all(settings, config_file, logger)
-    # subsample_all(settings, config_file, logger)
-
-    genebody_plots(settings, config_file, logger)
+    #load_all(settings, config_file, logger)
+    subsample_all(settings, config_file, logger)
+    # genebody_plots(settings, config_file, logger)

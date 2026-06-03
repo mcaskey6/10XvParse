@@ -5,6 +5,7 @@ import gzip
 import logging
 import re
 import subprocess
+import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .classes import LibraryFiles, BasePaths, TenXPaths, HashtagsPaths, ParsePaths, AnalysisConfig, RunSettings
 from . import io
@@ -132,7 +133,7 @@ def multiplex_fastqs(
             r1, r2 = library.gz_files
             batch.write(f"{library.name}\t{r1}\t{r2}\n")
 
-    logger.info("Multiplexing FASTA files with splitcode")
+    logger.info("Multiplexing %d libraries -> %s (splitcode)", len(libraries), multiplexed_files[0].parent)
     io.run_command(
         [
             "splitcode",
@@ -158,7 +159,7 @@ def filter_parse_fastqs(
 ) -> None:
     '''Filter out reads that do not have the expected barcodes with splitcode'''
 
-    logger.info("Filtering multiplexed FASTQ files with splitcode")
+    logger.info("Filtering %s by Parse barcodes (splitcode)", paths.multiplexed_files[0].name)
 
     with open(paths.parse_config, "w") as config_file:
         config_file.write("tags\tdistances\tids\tgroups\tminFindsG\tlocations\n")
@@ -192,7 +193,7 @@ def extract_rando_polyt(
 ) -> None:
     '''Generate FASTQ file of randO reads with splitcode'''
 
-    logger.info("Extracting RandO reads")
+    logger.info("Splitting %s into polyT and randO subsets", paths.filtered_files[0].name)
 
     with open(paths.randOpolyT_keep_file, "w") as keep_file:
         keep_file.write(f"r1_R {str(paths.randO_files[0]).split('_0')[0]}\n")
@@ -222,7 +223,7 @@ def pseudoalign_10x(
 ) -> None:
     '''Psuedoalign multiplexed files to reference. Build index if needed'''
 
-    logger.info("Building kallisto index")
+    logger.info("Building kallisto index at %s", paths.index_dir)
     io.run_command(
         [
             "kb",
@@ -240,16 +241,19 @@ def pseudoalign_10x(
         logger,
     )
 
-    logger.info("Pseudoaligning 10X multiplexed reads to genome index")
+    logger.info("Pseudoaligning 10x reads -> %s", kb_out_dir)
     io.run_command(
         [
             "kb",
             "count",
             "--overwrite",
             "--h5ad",
+            "--workflow=nac",
             "-t", str(threads),
             "-i", str(paths.index_file),
             "-g", str(paths.t2g_file),
+            "-c1", str(paths.cdna_file),
+            "-c2", str(paths.nascent_file),
             "-x", tech,
             "-o", str(kb_out_dir),
             str(fastq_files[0]),
@@ -271,7 +275,7 @@ def _trim_r2(fastq_r2: Path, trim_length: int, threads: int, logger: logging.Log
             stderr=subprocess.PIPE,
         )
         pigz = subprocess.Popen(
-            ["pigz", "-p", str(threads)],
+            ["pigz", "-f", "-p", str(threads)],
             stdin=seqtk.stdout,
             stdout=out_f,
             stderr=subprocess.PIPE,
@@ -284,9 +288,9 @@ def _trim_r2(fastq_r2: Path, trim_length: int, threads: int, logger: logging.Log
         seqtk_rc = seqtk.wait()
 
     if seqtk_stderr:
-        logger.error(seqtk_stderr)
+        logger.error("seqtk error trimming %s: %s", fastq_r2, seqtk_stderr)
     if pigz_stderr:
-        logger.error(pigz_stderr)
+        logger.error("pigz error compressing %s: %s", trimmed, pigz_stderr)
     if seqtk_rc != 0:
         raise subprocess.CalledProcessError(seqtk_rc, seqtk.args)
     if pigz_rc != 0:
@@ -306,7 +310,7 @@ def pseudoalign_10x_hashtags(
 ) -> None:
     '''Psuedoalign multiplexed files to reference. Build index if needed'''
 
-    logger.info("Building kallisto index for 10X Hashtags")
+    logger.info("Building kallisto index for 10X Hashtags at %s", paths.index_dir)
     io.run_command(
         [
             "kb",
@@ -325,7 +329,7 @@ def pseudoalign_10x_hashtags(
     if trim_length is not None:
         r2 = _trim_r2(fastq_files[1], trim_length, threads, logger)
 
-    logger.info("Pseudoaligning 10X Hashtag multiplexed reads to genome index")
+    logger.info("Pseudoaligning 10x Hashtag reads -> %s", kb_out_dir)
     io.run_command(
         [
             "kb",
@@ -355,7 +359,7 @@ def pseudoalign_parse(
 ) -> None:
     '''Pseudoalign all parse-specific files (FASTQ with all parse reads, polyT FASTQ, randO FASTQ)'''
 
-    logger.info("Building kallisto index")
+    logger.info("Building kallisto index at %s", paths.index_dir)
     io.run_command(
         [
             "kb",
@@ -373,13 +377,14 @@ def pseudoalign_parse(
         logger,
     )
 
-    logger.info("Pseudoaligning Parse multiplexed reads to genome index")
+    logger.info("Pseudoaligning Parse reads [%s] -> %s", fastq_files[0].name, kb_out_dir)
     io.run_command(
         [
             "kb",
             "count",
             "--overwrite",
             "--h5ad",
+            "--workflow=nac",
             "--strand=forward",
             "--parity=single",
             "-w", str(paths.kb_onlist),
@@ -387,6 +392,8 @@ def pseudoalign_parse(
             "-r", str(paths.kb_replace_config),
             "-i", str(paths.index_file),
             "-g", str(paths.t2g_file),
+            "-c1", str(paths.cdna_file),
+            "-c2", str(paths.nascent_file),
             "-x", tech,
             "-o", str(kb_out_dir),
             str(fastq_files[0]),
@@ -405,7 +412,7 @@ def subsample_fastqs(
 ) -> None:
     # Subsample FASTQ files to a specified number of reads with seqtk
 
-    logger.info("Subsampling FASTQ files to %d reads with seqtk", num_reads)
+    logger.info("Subsampling %s -> %s (%d reads)", fastq_files[0].name, output_files[0].name, num_reads)
 
     def subsample_one_fastq(
         input_file: Path,
@@ -420,7 +427,7 @@ def subsample_fastqs(
             )
 
             pigz = subprocess.Popen(
-                ["pigz", "-p", str(threads)],
+                ["pigz", "-f", "-p", str(threads)],
                 stdin=seqtk.stdout,
                 stdout=out_f,
                 stderr=subprocess.PIPE,
@@ -437,9 +444,9 @@ def subsample_fastqs(
             pigz_rc = pigz.wait()
 
         if seqtk_stderr:
-            logger.error(seqtk_stderr)
+            logger.error("seqtk error sampling %s: %s", input_file, seqtk_stderr)
         if pigz_stderr:
-            logger.error(pigz_stderr)
+            logger.error("pigz error compressing %s: %s", output_file, pigz_stderr)
 
         if seqtk_rc != 0:
             raise subprocess.CalledProcessError(seqtk_rc, seqtk.args)
@@ -562,7 +569,7 @@ def _multiplex_into_fastq(
 def core_pipeline(settings: RunSettings, paths: BasePaths, config: AnalysisConfig, assay: str, logger: logging.Logger) -> None:
     '''Download SRA reads and multiplex into a single paired FASTQ. Reference download is handled by the caller.'''
 
-    logger.info(f"Starting {assay} pipeline")
+    logger.info("[%s/%s] Starting SRA pipeline", config.name, assay)
 
     libraries = io.build_libraries(config, paths)
 
@@ -596,7 +603,7 @@ def era_core_pipeline(
 ) -> None:
     '''Download ERA reads from ENA FTP and multiplex into a single paired FASTQ.'''
 
-    logger.info("Starting %s ERA pipeline", assay)
+    logger.info("[%s/%s] Starting ERA pipeline", config.name, assay)
 
     libraries = io.build_era_libraries(config, paths)
 
@@ -662,7 +669,7 @@ def run_star_10x(
         outfile_prefix = str(paths.star_dir) + "/10x_"
 
     if not (paths.star_index_dir / "genomeParameters.txt").is_file():
-        logger.info("Building STAR index")
+        logger.info("Building STAR index at %s", paths.star_index_dir)
         io.run_command(
             [
                 "STAR",
@@ -675,7 +682,7 @@ def run_star_10x(
             logger
         )
     else:
-        logger.info("STAR index already exists. Skipping index build.")
+        logger.info("STAR index already exists at %s. Skipping build.", paths.star_index_dir)
 
     output = Path(outfile_prefix + "Aligned.sortedByCoord.out.bam")
     if not output.is_file() or not output.stat().st_size > 0 or overwrite:
@@ -719,7 +726,7 @@ def run_star_parse(
     from . import parse_config as pc
 
     if not (paths.star_index_dir / "genomeParameters.txt").is_file():
-        logger.info("Building STAR index")
+        logger.info("Building STAR index at %s", paths.star_index_dir)
         io.run_command(
             [
                 "STAR",
@@ -732,7 +739,7 @@ def run_star_parse(
             logger
         )
     else:
-        logger.info("STAR index already exists. Skipping index build.")
+        logger.info("STAR index already exists at %s. Skipping build.", paths.star_index_dir)
 
     x_string = pc.generate_parse_configs(
         config.technology,
@@ -789,8 +796,6 @@ def download_hk_genes(
     """
     if hk_genes_file.is_file():
         return
-
-    import requests
 
     ids: set[str] = set()
     for url in filter(None, [hrt_atlas_url, hrt_atlas_url_2]):

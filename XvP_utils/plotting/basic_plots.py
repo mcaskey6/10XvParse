@@ -23,7 +23,7 @@ def scatter_reads(ax: matplotlib.axes.Axes, data: ad.AnnData) -> None:
     ax.set_title(data.uns['title'] + " Reads")
 
 
-def knee_plot(ax: matplotlib.axes.Axes, raw_data: ad.AnnData, cutoff: int = 100) -> ad.AnnData:
+def knee_plot(ax: matplotlib.axes.Axes, raw_data: ad.AnnData, cutoff: int = 100, transform: bool = False) -> ad.AnnData:
     """Log-log knee plot with a vertical UMI threshold line.
 
     Prints the number of cells passing the threshold and returns a filtered dataset.
@@ -32,6 +32,7 @@ def knee_plot(ax: matplotlib.axes.Axes, raw_data: ad.AnnData, cutoff: int = 100)
         ax: Matplotlib axes to draw on.
         raw_data: Unfiltered AnnData object with a 'title' key in uns.
         cutoff: Minimum UMI count threshold for retaining a cell.
+        transform: If True, applies CPM normalization and log1p transformation to the filtered data before returning.
 
     Returns:
         AnnData filtered to cells at or above the cutoff.
@@ -48,7 +49,7 @@ def knee_plot(ax: matplotlib.axes.Axes, raw_data: ad.AnnData, cutoff: int = 100)
     ax.set_title(raw_data.uns['title'] + " Knee Plot")
 
     print(f"{num_cells:,.0f} cells passed the {cutoff} UMI threshold for {raw_data.uns['title']}")
-    data = processing.refilter(raw_data, knee[num_cells])
+    data = processing.refilter(raw_data, knee[num_cells], transform=transform)
 
     return data
 

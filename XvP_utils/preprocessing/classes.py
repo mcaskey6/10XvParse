@@ -107,14 +107,12 @@ class BasePaths:
     # Config paths
     config_dir: Path
     config_file: Path
-    parse_info_dir: Path
 
     # Data paths
     outdir: Path
     fasta_dir: Path
     dumped_dir: Path
     processed_dir: Path
-    sampled_dir: Path
     sra_dir: Path
     tmp_dir: Path
 
@@ -125,11 +123,9 @@ class BasePaths:
     # kb paths
     kb_dir: Path
     kb_all_dir: Path
-    kb_sub_dir: Path
 
     # FASTQ paths
     multiplexed_files: list[Path]
-    sampled_files: list[Path]
 
     @classmethod
     def build(cls, settings: RunSettings, config: AnalysisConfig, assay: str) -> "BasePaths":
@@ -142,21 +138,17 @@ class BasePaths:
         return cls(
             config_dir=config_dir,
             config_file=config_file,
-            parse_info_dir=config_dir / "parse_info",
             outdir=outdir,
             fasta_dir=fasta_dir,
             dumped_dir=fasta_dir / "Dumped",
             processed_dir=fasta_dir / "Processed",
-            sampled_dir=fasta_dir / "Sampled",
             sra_dir=outdir / "SRA",
             tmp_dir=outdir / "tmp",
             split_dir=outdir / "splitcode_configs",
             batch_file=outdir / "splitcode_configs" / "batch.txt",
             kb_dir=kb_dir,
             kb_all_dir=kb_dir / "all_out",
-            kb_sub_dir=kb_dir / "sampled_out",
             multiplexed_files=[fasta_dir / "Processed" / f"{assay}_{i}.fastq.gz" for i in range(2)],
-            sampled_files=[fasta_dir / "Sampled" / f"{assay}_{i}.fastq.gz" for i in range(2)],
         )
 
     def directories(self) -> list[Path]:
@@ -166,7 +158,6 @@ class BasePaths:
             self.fasta_dir,
             self.dumped_dir,
             self.processed_dir,
-            self.sampled_dir,
             self.sra_dir,
             self.tmp_dir,
             self.split_dir,
@@ -181,7 +172,13 @@ class BasePaths:
 
 @dataclass(frozen=True)
 class TenXPaths(BasePaths):
-    '''Paths for the 10x Genomics pipeline. Adds genome reference and kallisto index paths.'''
+    '''Paths for the 10x Genomics pipeline. Adds genome reference and kallisto index paths as well as 
+    all paths for subsampled data.'''
+
+    sampled_dir: Path
+    kb_sub_dir: Path
+    sampled_files: list[Path]
+
     index_dir: Path
     star_dir: Path
     star_index_dir: Path
@@ -202,19 +199,24 @@ class TenXPaths(BasePaths):
     @classmethod
     def build(cls, settings: RunSettings, config: AnalysisConfig, assay: str) -> "TenXPaths":
         base = BasePaths.build(settings, config, assay)
+        sampled_dir= base.fasta_dir / "Sampled"
         index_dir = settings.root_dir / "Index" / config.species
+        kb_sub_dir= base.kb_dir / "sampled_out"
         star_dir = base.outdir / "STARsolo"
         star_index_dir = settings.root_dir / "Index" / f"{config.species}_STAR"
         kb_onlist = base.config_dir / "10x_info" / f"{config.technology}_whitelist.txt"
         base_fields = {f.name: getattr(base, f.name) for f in fields(base)}
         base_fields["kb_all_dir"] = base.kb_dir / "10x_out"
-        base_fields["kb_sub_dir"] = base.kb_dir / "sampled_10x_out"
         plot_dir = settings.root_dir/ "Data" / config.name / "Plots"
+        sampled_files=[base.fasta_dir / "Sampled" / f"{assay}_{i}.fastq.gz" for i in range(2)]
 
         return cls(
             **base_fields,
+            sampled_dir=sampled_dir,
+            sampled_files=sampled_files,
             star_dir=star_dir,
             index_dir=index_dir,
+            kb_sub_dir=kb_sub_dir,
             star_index_dir=star_index_dir,
             kb_onlist = kb_onlist,
             index_file=index_dir / "index.idx",
@@ -232,7 +234,7 @@ class TenXPaths(BasePaths):
         )
 
     def directories(self) -> list[Path]:
-        return super().directories() + [self.index_dir, self.star_dir, self.star_index_dir, self.plot_dir]
+        return super().directories() + [self.sampled_dir, self.index_dir, self.star_dir, self.star_index_dir, self.plot_dir]
 
 
 @dataclass(frozen=True)
@@ -266,7 +268,10 @@ class HashtagsPaths(BasePaths):
 
 @dataclass(frozen=True)
 class ParsePaths(TenXPaths):
-    '''Paths for the Parse Biosciences pipeline. Extends TenXPaths with barcode-split FASTQ paths.'''
+    '''Paths for the Parse Biosciences pipeline. Extends TenXPaths with barcode-split FASTQ paths.'''   
+    # directory for Parse-specific info files for congfig generation
+    parse_info_dir: Path
+
     # splitcode config paths
     parse_config: Path
     polyT_barcodes: Path
@@ -302,6 +307,7 @@ class ParsePaths(TenXPaths):
 
         return cls(
             **ten_x_fields,
+            parse_info_dir=ten_x.config_dir / "parse_info",
             parse_config=configs_dir / "config_RT_parse.txt",
             polyT_barcodes=configs_dir / "r1_T.txt",
             randO_barcodes=configs_dir / "r1_R.txt",
