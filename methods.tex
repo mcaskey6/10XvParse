@@ -1,0 +1,236 @@
+\section{Methods}
+
+\subsection{Datasets}
+
+We reassembled and reprocessed six previously published comparison studies, each of
+which profiled a common biological sample with both the Parse Biosciences Evercode
+Whole Transcriptome (WT) split-pool platform and the 10x Genomics Chromium Single
+Cell 3$'$ droplet platform (Table~\ref{tab:datasets}). Raw reads were obtained from
+the NCBI Sequence Read Archive (SRA) or the European Nucleotide Archive (ENA); the
+accession for every assay is recorded in the accompanying code repository. The panel
+comprised mouse thymocytes (Analysis~2;
+Evercode WT v2 and WT Mini v2 vs.\ Chromium Next GEM v3), human PBMCs from two donors
+(Analysis~3; Evercode WT v2 vs.\ Chromium Next GEM v3), a human/mouse cell-line
+``barnyard'' mixture of K562 and mESC cells (Analysis~4; Evercode WT Mini v2 vs.\
+Chromium Next GEM v3), frozen human PBMCs (Analysis~5; Evercode WT v2 vs.\ Chromium
+Next GEM v3), a multiplexed human glucocorticoid-resistant E/R+ ALL Reh cell line
+under six drug perturbations (Analysis~6; Evercode WT Mini v1 vs.\ Chromium Next GEM
+v3), and resting/activated frozen human PBMCs (Analysis~7; Evercode WT Mini v3 vs.\
+Chromium v4). To remove sequencing depth as a confounder, all assays within an
+analysis were processed through a single unified pipeline and compared at matched
+read depth (see \textit{Read-depth matching}).
+
+All processing was orchestrated by a custom Python package (\texttt{XvP\_utils})
+built on a conda environment; key tool versions are given in Table~\ref{tab:software}.
+
+\begin{table*}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\caption{Datasets. Each study profiled a common sample with both the Parse Evercode
+and 10x Chromium platforms. Sequencing accessions for every assay are provided in the
+accompanying code repository. Analysis~7 is an in-house, currently unpublished
+dataset.}
+\label{tab:datasets}
+\begin{tabular}{@{}p{0.04\textwidth} p{0.33\textwidth} p{0.26\textwidth} p{0.26\textwidth}@{}}
+\hline
+\# & Sample & Parse Evercode & 10x Chromium \\
+\hline
+2 & Mouse thymocytes, two female mice & WT v2; WT Mini v2 & Next GEM v3 (+ TotalSeq-B hashtags) \\
+3 & Human PBMCs, two healthy donors & WT v2 & Next GEM v3 \\
+4 & Human K562 / mouse mESC barnyard mixture & WT Mini v2 & Next GEM v3 \\
+5 & Frozen human PBMCs & WT v2 & Next GEM v3 \\
+6 & Human E/R+ ALL Reh cell line, six drug perturbations & WT Mini v1 & Next GEM v3 (+ MULTI-seq) \\
+7 & Resting/activated frozen human PBMCs & WT Mini v3 & Chromium v4 (+ MULTI-seq) \\
+\hline
+\end{tabular}
+\end{table*}
+
+\subsection{Read retrieval and library assembly}
+
+SRA runs were downloaded with \texttt{prefetch} and converted to FASTQ with
+\texttt{fasterq-dump} (\texttt{-{}-split-files -{}-skip-technical}; SRA-Tools
+v3.0.3~\cite{leinonen2011sra}) and compressed with \texttt{pigz}. ENA runs were
+streamed directly from the ENA FTP server as gzipped FASTQ. For assays distributed as
+multiple sublibraries, all sublibraries belonging to a single assay were concatenated
+into one paired-end FASTQ with \texttt{splitcode -{}-remultiplex} (splitcode
+v0.30.0~\cite{sullivan2024splitcode}), preserving the original
+read-1/read-2 structure.
+
+\subsection{Reference genomes and indices}
+
+Reference genome FASTA and GTF annotations were obtained from Ensembl~\cite{ensembl}. Human assays
+used GRCh38 (release~115) and the mouse thymocyte assay used GRCm39 (release~115).
+For the barnyard analysis a combined reference was constructed by concatenating the
+human (GRCh38, release~112) and mouse (GRCm39, release~115) genomes; every chromosome
+name, \texttt{gene\_id}, and \texttt{gene\_name} was prefixed with a species tag
+(\texttt{HUMAN\_}~/~\texttt{MOUSE\_}) so that reads could be assigned unambiguously to
+a species of origin.
+
+For pseudoalignment, a nascent-and-mature (nac) index was built for each reference
+with \texttt{kb ref -{}-workflow nac} (kb-python v0.29.3~\cite{sullivan2023kb},
+wrapping kallisto v0.51.1~\cite{bray2016kallisto} and bustools
+v0.44.1~\cite{melsted2021bustools}). The nac workflow indexes both spliced (mature)
+and unspliced
+(nascent) transcript sequences, allowing intronic reads to be quantified separately
+from exonic reads.
+
+\subsection{Parse split-pool barcode handling}
+
+Parse Evercode encodes cell identity through three rounds of combinatorial barcoding
+carried on read~2, with the round-1 (RT) barcode existing in two chemistries within
+each well: an anchored poly(dT) primer (polyT) and a random-hexamer primer (randO).
+Because the polyT and randO primers in a given well label the same cell, they must
+be reconciled during quantification.
+
+Barcode whitelists and the kallisto technology string for each kit/chemistry were
+generated programmatically from the Parse barcode reference
+(\texttt{Configs/parse\_info/}), keyed on the kit name (e.g.\ \texttt{WT\_v2},
+\texttt{WT\_mini\_v3}) and, where applicable, the subset of sample wells used. Reads
+were then processed with \texttt{splitcode} (v0.30.0) in two steps: (i)~reads were
+filtered to those carrying an expected round-1 barcode at the kit-specific position,
+allowing one mismatch (Hamming distance $\leq 1$); and (ii)~the retained reads were
+partitioned into polyT and randO subsets for separate downstream analysis.
+
+Filtered Parse reads were quantified with \texttt{kb count -{}-workflow nac} using
+the kit-specific technology string, forward strandedness
+(\texttt{-{}-strand=forward}), and single-end parity
+(\texttt{-{}-parity=single}). A per-round barcode on-list (\texttt{-w onlist.txt})
+was supplied for barcode error correction, and a replacement map
+(\texttt{-r replace.txt}) collapsed each randO round-1 barcode onto its polyT
+counterpart in the same well so that both primer chemistries contributed counts to a
+single cell. Three count matrices were produced per Parse assay: the full filtered
+set, the polyT-only subset, and the randO-only subset.
+
+\subsection{10x Genomics quantification}
+
+10x reads were quantified with \texttt{kb count -{}-workflow nac} using the
+appropriate technology string (\texttt{10XV3} for Chromium Next GEM v3 assays,
+\texttt{10XV4} for the Chromium v4 assay) and the matching cell-barcode on-list. As
+with the Parse data, the nac workflow yielded mature, nascent, and ambiguous count
+layers.
+
+For the multiplexed datasets (Analyses~6 and 7), the 10x hashtag/MULTI-seq oligo
+libraries were quantified separately with the kb-python \texttt{kite} (feature
+barcoding) workflow; read~2 was trimmed to the tag length with \texttt{seqtk
+trimfq}~\cite{seqtk} prior to counting.
+
+\subsection{Read-depth matching}
+
+To compare technologies at equal sequencing effort, processed read counts were
+tabulated for every assay in an analysis (the full filtered FASTQ for each 10x and
+Parse assay, plus the Parse polyT and randO subsets) and the minimum across assays
+was taken as the target depth. Each FASTQ was then downsampled to this common depth
+with \texttt{seqtk sample} using a fixed random seed (42) and re-quantified with
+kb-python as above. The 10x, full-Parse, polyT, and randO read sets were each
+subsampled to the same depth so that all per-gene and per-cell comparisons reflect
+differences in chemistry rather than in coverage.
+
+\subsection{Cell calling and quality control}
+
+Downstream analysis was performed in Python with Scanpy
+(v1.11.4~\cite{wolf2018scanpy}) and AnnData (v0.12.2~\cite{virshup2024anndata}). Each
+kb-python h5ad matrix was loaded, Ensembl gene IDs were mapped to
+gene symbols, and genes/cells with zero counts were removed. Per-cell and per-gene
+summary statistics were computed, including total UMI counts, genes detected, and
+the fraction of counts attributable to nascent (unspliced), mature (spliced), and
+ambiguous molecules. Alignment statistics were drawn from kb-python's
+\texttt{run\_info.json} and, where STAR alignments were generated, from STARsolo's
+\texttt{Log.final.out}.
+
+Cells were called from each assay's barcode-rank (knee) plot: the UMI distribution
+was ranked and an assay-specific minimum-UMI threshold was applied to separate cells
+from empty droplets/barcodes, retaining all barcodes above the threshold.
+
+Gene-level annotations were assembled once per reference. Gene biotype (protein
+coding, lncRNA, mitochondrial, ribosomal, and OXPHOS classes, identified by biotype
+and gene-symbol prefixes) was parsed from the Ensembl GTF, while transcript length
+and GC content were computed directly from the kallisto cDNA FASTA and averaged
+across isoforms per gene---guaranteeing complete coverage for every gene in the
+index. Per-cell biotype fractions (percent protein-coding, mitochondrial,
+ribosomal, and lncRNA counts) were added from these annotations.
+
+Library complexity / sequencing saturation was estimated for each assay by
+extrapolating the per-gene count distribution with PreSeq
+\texttt{lc\_extrap}~\cite{daley2013preseq}.
+
+\subsection{Gene-body coverage}
+
+To assess 5$'$/3$'$ coverage bias, depth-matched reads were aligned to the genome
+with STARsolo (STAR v2.7.11b~\cite{dobin2013star}). 10x reads were aligned in
+\texttt{CB\_UMI\_Simple}
+mode with the 10x cell-barcode whitelist; Parse reads were aligned in
+\texttt{CB\_UMI\_Complex} mode with the three per-round Parse whitelists and
+barcode/UMI positions derived from the kit technology string (1-mismatch barcode
+matching). Parse alignments were generated separately for the full, polyT, and randO
+read subsets. Coordinate-sorted BAM files were indexed with SAMtools
+(v1.21~\cite{danecek2021samtools}). A BED12 model was produced from the GTF with
+\texttt{gffread}~\cite{pertea2020gffread} and subset to housekeeping transcripts from
+the HRT Atlas~\cite{hounkpe2021hrt}; transcript-body coverage was then computed across
+all assays with RSeQC \texttt{geneBody\_coverage.py} (RSeQC v5.0.4~\cite{wang2012rseqc}).
+
+\subsection{Per-gene composition comparison}
+
+For each technology pair, the per-gene share of total counts (gene counts as a
+percentage of all counts in that assay) was compared. Gene \texttt{var} tables were
+merged on shared gene identifiers (genes detected in only one assay were retained
+with a value of zero), and an ordinary least-squares regression of one assay's
+per-gene percentage on the other's was fit with statsmodels~\cite{seabold2010statsmodels}. Cook's distance was
+computed for every gene to flag those contributing disproportionately to the
+between-technology difference, and a Gaussian kernel density estimate was used to
+colour points by local density. Outlier genes were summarised by biotype, gene
+length, GC content, and gene-name prefix.
+
+\subsection{Cross-study differential composition and functional enrichment}
+
+To identify genes that were consistently over- or under-represented by one technology
+across studies, a pseudobulk differential-expression analysis was performed with
+edgePython, a Python implementation of the edgeR
+workflow~\cite{robinson2010edger,chen2016edger}. Counts were summed across all cells
+within each assay to form one pseudobulk profile per sample, and profiles were
+restricted to genes detected in every sample. A DGEList was constructed and normalised
+by the trimmed mean of M-values (TMM) method~\cite{robinson2010tmm}. A design matrix of the form
+\texttt{$\sim$ tissue + technology} was used so that the technology effect was
+estimated while controlling for biological source; lowly expressed genes were removed
+with \texttt{filterByExpr}. Negative-binomial dispersions were estimated
+(\texttt{estimateDisp}), a quasi-likelihood negative-binomial GLM was fit
+(\texttt{glmQLFit}), and the technology coefficient was tested with the
+quasi-likelihood F-test (\texttt{glmQLFTest}). P-values were adjusted by the
+Benjamini--Hochberg procedure, and genes with FDR below the chosen threshold were
+called as differentially represented between technologies.
+
+Genes consistently enriched in each technology were then tested for functional
+enrichment with gseapy's~\cite{fang2023gseapy} Enrichr~\cite{kuleshov2016enrichr} interface against the GO Biological Process, GO
+Molecular Function, GO Cellular Component, KEGG, and MSigDB Hallmark gene-set
+libraries, using all genes retained in the comparison as the statistical background.
+Terms with a Benjamini--Hochberg adjusted p-value below 0.05 were reported.
+
+\begin{table}[ht]
+\centering
+\caption{Software.}
+\label{tab:software}
+\begin{tabular}{lll}
+\hline
+Tool & Version & Use \\
+\hline
+SRA-Tools~\cite{leinonen2011sra} & 3.0.3 & SRA download / FASTQ conversion \\
+pigz & 2.4 & FASTQ compression \\
+splitcode~\cite{sullivan2024splitcode} & 0.30.0 & Library remultiplexing, Parse barcode filtering/splitting \\
+kb-python~\cite{sullivan2023kb} & 0.29.3 & Pseudoalignment and UMI counting (nac workflow) \\
+\quad kallisto / bustools~\cite{bray2016kallisto,melsted2021bustools} & 0.51.1 / 0.44.1 & (bundled with kb-python) \\
+seqtk~\cite{seqtk} & 1.2-r94 & Read subsampling and R2 trimming \\
+STAR / STARsolo~\cite{dobin2013star} & 2.7.11b & Genome alignment for gene-body coverage \\
+SAMtools~\cite{danecek2021samtools} & 1.21 & BAM indexing \\
+gffread~\cite{pertea2020gffread} & 0.12.7 & GTF $\rightarrow$ BED12 conversion \\
+RSeQC~\cite{wang2012rseqc} & 5.0.4 & Gene-body coverage \\
+PreSeq~\cite{daley2013preseq} & 3.2.0 & Library-complexity extrapolation \\
+Scanpy / AnnData~\cite{wolf2018scanpy,virshup2024anndata} & 1.11.4 / 0.12.2 & Downstream QC and analysis \\
+Scrublet~\cite{wolock2019scrublet} & 0.2.3 & Doublet detection \\
+Biopython~\cite{cock2009biopython} & 1.87 & Transcript length / GC from cDNA FASTA \\
+statsmodels~\cite{seabold2010statsmodels} & 0.14.5 & Per-gene OLS / Cook's distance \\
+edgePython~\cite{robinson2010edger,robinson2010tmm,chen2016edger} & 0.2.5 & Pseudobulk differential composition (edgeR workflow) \\
+gseapy (Enrichr)~\cite{fang2023gseapy,kuleshov2016enrichr} & 1.2.1 & Functional enrichment \\
+Python & 3.12.3 & --- \\
+\hline
+\end{tabular}
+\end{table}

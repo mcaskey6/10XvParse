@@ -73,10 +73,8 @@ def init_processing(data_name: str, assay: str, project_dir: str, analysis_name:
             gene_names.append(line.strip())
     data.var_names = gene_names
 
-    data.obs['n_genes'] = data.X.astype(bool).sum(axis=1).A1
-    data.var['n_cells'] = data.X.astype(bool).sum(axis=0).A1
-    data.obs['n_counts'] = data.X.sum(axis=1).A1
-    data.var['percent_counts'] = data.X.sum(axis=0).A1 / data.X.sum() * 100
+    sc.pp.filter_genes(data, min_cells=1)
+    sc.pp.filter_cells(data, min_genes=1)
 
     data.uns['name'] = data_name
     if data_title:
@@ -103,10 +101,17 @@ def init_processing(data_name: str, assay: str, project_dir: str, analysis_name:
     data.uns['star_unmapped'] = int(star_dict.get("Number of input reads")) \
                                 - int(data.uns['star_uniquely_mapped']) \
                                 - int(data.uns['star_multimapped'])
+    
+    data.obs['n_genes'] = data.X.astype(bool).sum(axis=1).A1
+    data.var['n_cells'] = data.X.astype(bool).sum(axis=0).A1
+    data.obs['n_counts'] = data.X.sum(axis=1).A1
+    data.var['percent_counts'] = data.X.sum(axis=0).A1 / data.uns["n_raw_counts"] * 100
 
-
-    sc.pp.filter_genes(data, min_cells=1)
-    sc.pp.filter_cells(data, min_genes=1)
+    data.uns['percent_nascent'] = data.layers['nascent'].sum() / data.uns["n_raw_counts"] * 100 
+    data.uns['percent_ambiguous'] = data.layers['ambiguous'].sum() / data.uns["n_raw_counts"] * 100
+    data.uns['percent_mature'] = data.layers['mature'].sum() / data.uns["n_raw_counts"] * 100
+    data.var['percent_nascent'] = data.layers['nascent'].sum(axis=0).A1 / data.X.sum(axis=0).A1 * 100
+    data.obs['percent_nascent'] = data.layers['nascent'].sum(axis=1).A1 / data.obs['n_counts'] * 100
 
     return data
 
@@ -127,10 +132,21 @@ def refilter(raw_data: ad.AnnData, min_counts: int, transform: bool = False) -> 
     data = raw_data.copy()
     sc.pp.filter_cells(data, min_counts=min_counts)
     sc.pp.filter_genes(data, min_cells=1)
+
+    data.uns['n_raw_counts_filtered'] = data.X.sum()
+
+    data.uns['percent_nascent'] = data.layers['nascent'].sum() / data.uns["n_raw_counts_filtered"] * 100 
+    data.uns['percent_ambiguous'] = data.layers['ambiguous'].sum() / data.uns["n_raw_counts_filtered"] * 100
+    data.uns['percent_mature'] = data.layers['mature'].sum() / data.uns["n_raw_counts_filtered"] * 100
+    data.var['percent_nascent'] = data.layers['nascent'].sum(axis=0).A1 / data.X.sum(axis=0).A1 * 100
+    data.obs['percent_nascent'] = data.layers['nascent'].sum(axis=1).A1 / data.X.sum(axis=1).A1 * 100
+    
     if transform:
         sc.pp.normalize_total(data, target_sum=1e6, exclude_highly_expressed=True)
         sc.pp.log1p(data)
         print("Applied CPM normalization and log1p transformation to the filtered data.")
+    
+    data.uns['n_counts'] = data.X.sum()
     data.obs['n_genes'] = data.X.astype(bool).sum(axis=1).A1
     data.var['n_cells'] = data.X.astype(bool).sum(axis=0).A1
     data.obs['n_counts'] = data.X.sum(axis=1).A1
@@ -421,8 +437,7 @@ def update_gene_info(gene_info: pd.DataFrame, datasets: list[ad.AnnData], path: 
     subset_cols = [col for col in gene_info.columns if col.endswith('_n_cells')]
     gene_info = gene_info.dropna(subset=subset_cols, how='all')
     gene_info = gene_info.fillna(0)
-    file_path = path / 'gene_data/gene_comparisons.csv'
-    gene_info.to_csv(file_path)
+    gene_info.to_csv(path)
     return gene_info
 
 

@@ -5,179 +5,228 @@ import pandas as pd
 import numpy as np
 from upsetty import Upset
 import gseapy as gp
+import matplotlib
 import matplotlib.patches as mpatches
 from scipy.stats import gmean
 import re
-from typing import Tuple
+import edgepython as ep
+from typing import Tuple, Any
+from . import init_processing
 
-def merge_analyses_with_clr(project_dir: Path, analyses_dict: dict[str:str], comparing: Tuple[str, str], pct_threshold: float = 0.5, pct_cutoff: float = 0.001) -> pd.DataFrame:
-    type1 = comparing[0]
-    type2 = comparing[1]
+def load_cross_comparison_data(samples: list[tuple[str, str, str, str, str]], comparison:Tuple[str,str], project_dir:Path)->pd.DataFrame:
+    side1, side2 = comparison
 
-    type1_outlier_out_dir = Path(type1 + "_outliers")
-    type2_outlier_out_dir = Path(type2 + "_outliers")
-    type1_outlier_out_dir.mkdir(exist_ok=True)
-    type2_outlier_out_dir.mkdir(exist_ok=True)
+    # Output dirs expected by the shared plotting helpers
+    for d in [f"{side1}_outliers", f"{side2}_outliers"]:
+        Path(d).mkdir(exist_ok=True)
 
-    # Load data
-    data = {}
-    for name, path in analyses_dict.items():
-        data[name] = pd.read_csv(project_dir / path)
-        data[name].drop(columns=["Unnamed: 0"], inplace=True)
+    series1  = {}
+    series2 = {}
 
-    # Remove genes with low percent counts in all datasets
-    for name, df in data.items():
-        drop_indices = df[(df[f"{type1}_percent_counts"] < pct_cutoff) & (df[f"{type2}_percent_counts"] < pct_cutoff)].index
-        df.drop(index=drop_indices, inplace=True)
+    # Load h5ad matrices using init_processing from kb_python folder 
+    for label, analysis, tenx_assay, parse_assay, tissue in samples:
+        print(f"Loading {label}...")
+        datasets = []
+        for side in comparison:
+            assay = tenx_assay if side == "10x" else parse_assay
+            d = init_processing(
+                analysis_name=analysis, project_dir=project_dir,
+                data_name=side, assay=assay, data_title=f"{label} {side}",
+            )
+            datasets.append(d)
+        d1, d2 = datasets
+        series1[f"{label}_{side1}"]    = pd.Series(np.asarray(d1.X.sum(axis=0)).flatten(),  index=d1.var_names)
+        series2[f"{label}_{side2}"] = pd.Series(np.asarray(d2.X.sum(axis=0)).flatten(), index=d2.var_names)
 
-    # Find outlier genes
-    for name, df in data.items():
-        CLR = np.log2((df[f"{type1}_percent_counts"] + 1e-6) / (df[f"{type2}_percent_counts"] + 1e-6)) - np.log2(gmean(df[f"{type1}_percent_counts"] + 1e-6) / gmean(df[f"{type2}_percent_counts"] + 1e-6))
-        df["CLR"] = CLR
-        df[f"{type1}_outliers"] = CLR >= np.log2(1 + pct_threshold)  
-        df[f"{type2}_outliers"] = CLR <= np.log2(1/(1+pct_threshold)) 
+    # Inner join: genes present in all samples
+    df1  = pd.DataFrame(series1)
+    df2 = pd.DataFrame(series2)
+    combined = pd.concat([df1, df2], axis=1).dropna()
+    combined = combined.loc[combined.sum(axis=1) > 0]
+    print(f"\n{len(combined)} genes retained across all 10 samples")
 
-    # Suffix dataset specific columns
-    for name, df in data.items():
-        for col_name in df.columns:
-            if col_name.endswith("_distance") or col_name.endswith("_percent_counts") or col_name.endswith("_n_cells") or col_name.endswith("_outliers") or col_name in ["CLR"]:
-                new_col_name = f"{name}_{col_name}"
-                df.rename(columns={col_name: new_col_name}, inplace=True)
+    return combined
 
-    merged_df = pd.DataFrame()
-    for name, df in data.items():
-        
-        if merged_df.empty:
-            merged_df = df
-        else:
-            merged_df = merged_df.merge(df, on=["gene_name", "gene_id", "gene_length", "gc_content",
-                                        "is_lnc", "is_pc", "is_mito", "is_ribo"], how="outer")
+def perform_edgepy(combined: pd.DataFrame, comparing: Tuple[str,str], samples: list[tuple[str, str, str, str, str]]) -> Tuple[Any, Any, Any, Any, Any]:
+    side1, side2 = comparing
+    
+    labels      = [s[0] for s in samples]
+    tissue_map  = {s[0]: s[4] for s in samples}
+    tissues     = [tissue_map[l] for l in labels]
+    tissue_categories=list(set(tissue_map.values()))  
 
-    for col_name in merged_df.columns:
-        if col_name.endswith("_distance") or col_name.endswith("_percent_counts") or col_name.endswith("_n_cells"):
-            merged_df[col_name] = merged_df[col_name].fillna(0)
-        if col_name.endswith("_outliers"):
-            merged_df[col_name] = merged_df[col_name].fillna(False)
-    merged_df.set_index("gene_name", inplace=True)
+    counts_matrix = combined.values         
+    gene_names    = combined.index.tolist()
+    genes_df      = pd.DataFrame({"gene_name": gene_names})
 
-    return merged_df
+    # DGEList and TMM normalization
+    dge = ep.make_dgelist(counts=counts_matrix, genes=genes_df)
+    dge = ep.calc_norm_factors(dge, method="TMM")
+    print("TMM norm factors:", np.round(dge["samples"]["norm.factors"].values, 4))
 
-def plot_merged_outlier_upset(merged_df: pd.DataFrame, comparing: Tuple[str, str]):
-    def plot_upset(merged_df: pd.DataFrame, side: str):
-        outlier_data = merged_df[[col for col in merged_df.columns if col.endswith(f"_{side}_outliers")]]
-        outlier_data.columns = [col.replace(f"_{side}_outliers", "") for col in outlier_data.columns]
-        outlier_data = outlier_data.astype(bool)
-        outlier_data = outlier_data[outlier_data.any(axis=1)]
-        upset = Upset.generate_plot(outlier_data)
-        upset.show()
+    # Design matrix: ~tissue + tech ()
+    design_data = pd.DataFrame({
+        "tissue": pd.Categorical(tissues * len(tissue_categories), categories=tissue_categories),
+        "tech":   pd.Categorical([side1] * len(samples) + [side2] * len(samples), categories=[side1, side2]),
+    })
+    design = ep.model_matrix("~tissue+tech", data=design_data)
+    print(f"Design: {design.shape[0]} samples x {design.shape[1]} coefficients  "
+        f"(df.residual = {design.shape[0] - design.shape[1]})")
+    
+    # Filter low-count genes
+    keep  = ep.filter_by_expr(dge, design=design)
+    dge_f = dge.copy()
+    dge_f["counts"] = dge["counts"][keep]
+    dge_f["genes"]  = dge["genes"].iloc[keep]
+    print(f"Retained {keep.sum()} / {len(keep)} genes after filterByExpr")
 
-    plot_upset(merged_df, side=comparing[0])
-    plot_upset(merged_df, side=comparing[1])
+    # Estimate Dispersion
+    dge_f = ep.estimate_disp(dge_f, design=design)
+    print(f"Common dispersion (BCV): {np.sqrt(dge_f['common.dispersion']):.4f}")
 
-def consistent_outlier_violin_plots(merged_df: pd.DataFrame, comparing: Tuple[str, str], figsize: Tuple[int, int] = (10, 5)):
-    background_lengths = merged_df['gene_length'].tolist()
-    background_gcs = merged_df['gc_content'].tolist()
+    # Fit data to glm
+    fit = ep.glm_ql_fit(dge_f, design=design)
 
-    for side in comparing:
-        all5 = merged_df[
-        merged_df[[c for c in merged_df.columns if c.endswith(f"_{side}_outliers")]].all(axis=1)
-        ].index.tolist()
+    # Test the last design coefficient 
+    qlf = ep.glm_ql_ftest(fit, coef=design.shape[1] - 1)
 
-        lengths = merged_df[merged_df.index.isin(all5)]['gene_length'].tolist()
-        gcs = merged_df[merged_df.index.isin(all5)]['gc_content'].tolist()
+    # Get significant genes
+    keep  = ep.filter_by_expr(dge, design=design)
+    tt = ep.top_tags(qlf, n=keep.sum(), adjust_method="BH", sort_by="PValue")
+    results = tt["table"].copy()
+    
+    return dge_f, fit, qlf, design, results
 
-        fig, ax = plt.subplots(1, 2, figsize=figsize)
-        ax[0].violinplot([np.log10(lengths), np.log10(background_lengths)], showextrema=False, showmedians=True)
-        ax[1].violinplot([np.log10(gcs), np.log10(background_gcs)], showextrema=False, showmedians=True)
-        ax[0].set_ylabel("Gene Length (log10)", fontsize=10)
-        ax[1].set_ylabel("Percent GC content", fontsize=10)
-        ax[0].set_xticks([1,2],labels=["Outliers", "Background"])
-        ax[1].set_xticks([1,2],labels=["Outliers", "Background"])
-        plt.tight_layout()
-        plt.show()
-        plt.close(fig)
+def volcano_plot(results: pd.DataFrame, comparing: Tuple[str, str], fdr_thresh: float, label_num: int = 8,
+                 marker_genes_path: str | Path | None = None,
+                 gene_sets: list[str] | None = None,
+                 terms: list[str] | None = None):
+    side1, side2 = comparing
 
-def consistent_outlier_bar_plots(merged_df: pd.DataFrame, comparing: Tuple[str, str], figsize: Tuple[int, int] = (10, 5)):
-    cols = ['is_pc', 'is_lnc', 'is_mito', 'is_ribo']
-    col_names = ['protein-coding count', 'lncRNA count', 'mtRNA count', 'rRNA count']
-    color = ['yellow', 'blue', 'red', 'green']
+    sig2 = (results["FDR"] < fdr_thresh) & (results["logFC"] > 0)
+    sig1 = (results["FDR"] < fdr_thresh) & (results["logFC"] < 0)
+    ns   = ~(sig2 | sig1)
 
-    for side in comparing:
-        all5 = merged_df[
-        merged_df[[c for c in merged_df.columns if c.endswith(f"_{side}_outliers")]].all(axis=1)
-        ].index.tolist()
+    nlp = -np.log10(results["FDR"].clip(lower=1e-300))
 
-        fig, ax = plt.subplots(1,2, figsize=figsize)
-        sums = []
-        pcts = []
-        for col in cols:
-            sum = merged_df[col][merged_df.index.isin(all5)].sum()
-            sums.append(sum)
-            pcts.append(sum/merged_df[col].sum())
+    fig, ax = plt.subplots(figsize=(8, 6), dpi=300)
+    ax.scatter(results.loc[ns,   "logFC"], nlp[ns],    color="grey",    s=3, alpha=0.3)
+    ax.scatter(results.loc[sig1, "logFC"], nlp[sig1],  color="#1f77b4", s=5, alpha=0.6)
+    ax.scatter(results.loc[sig2, "logFC"], nlp[sig2],  color="#d62728", s=5, alpha=0.6)
+    ax.axhline(-np.log10(fdr_thresh), color="black", linewidth=0.8, linestyle="--")
+    ax.axvline(0, color="black", linewidth=0.5)
 
-        ax[0].bar(col_names, sums, color=color)
-        ax[1].bar(col_names, pcts, color=color)
+    for sub in [results[sig1].nsmallest(label_num, "FDR"),
+                results[sig2].nsmallest(label_num, "FDR")]:
+        for _, row in sub.iterrows():
+            ax.annotate(row["gene_name"],
+                        (row["logFC"], -np.log10(row["FDR"])),
+                        fontsize=6, ha="center",
+                        xytext=(0, 4), textcoords="offset points")
 
-        ax[0].set_ylabel('Count of Genes in Type')
-        ax[1].set_ylabel('Percent of Genes in Type')
+    legend_handles = [
+        mpatches.Patch(color="#d62728", label=f"Higher in {side2} (n={sig1.sum()})"),
+        mpatches.Patch(color="#1f77b4", label=f"Higher in {side1} (n={sig2.sum()})"),
+        mpatches.Patch(color="grey",    label="n.s."),
+    ]
 
-        plt.tight_layout()
-        plt.show()
-        plt.close(fig)
+    if marker_genes_path is not None:
+        def _norm(name: str) -> str:
+            for prefix in ("HUMAN_", "MOUSE_"):
+                if name.startswith(prefix):
+                    return name[len(prefix):].upper()
+            return name.upper()
 
-def consistent_outlier_enrichment(merged_df: pd.DataFrame, comparing: Tuple[str, str]) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    # Background = all genes in your merged table
-    background = merged_df.index.tolist()
+        enr_df = pd.read_csv(marker_genes_path, index_col=0)
+        if gene_sets is not None:
+            enr_df = enr_df[enr_df["Gene_set"].isin(gene_sets)]
+        if terms is not None:
+            enr_df = enr_df[enr_df["Term"].isin(terms)]
 
-    enrichment_results = []
-    for side in comparing:
-        # Get genes consistently enriched in all 5 datasets for this side
-        all5 = merged_df[
-            merged_df[[c for c in merged_df.columns if c.endswith(f'_{side}_outliers')]].all(axis=1)
-        ].index.tolist()
+        per_term_genes: dict[str, set[str]] = {}
+        for _, row in enr_df.iterrows():
+            t = row["Term"]
+            if t not in per_term_genes:
+                per_term_genes[t] = set()
+            per_term_genes[t].update(_norm(g) for g in row["Genes"].split(";"))
 
-        enr = gp.enrichr(
-            gene_list=all5,
-            gene_sets=['GO_Biological_Process_2026', 'GO_Molecular_Function_2026', 'GO_Cellular_Component_2026',
-                    'KEGG_2021_Human', 'MSigDB_Hallmark_2020'],
-            background=background,   
-            outdir=None,
-            verbose=False,
-        )
+        norm_names = results["gene_name"].apply(_norm)
 
-        enr_results = enr.results[enr.results['Adjusted P-value'] < 0.05].sort_values('Adjusted P-value')
-        enr_results.to_csv(f"{side}_outliers/enrichment_results.csv")
-        enrichment_results.append(enr_results)
-    return enrichment_results[0], enrichment_results[1]
+        for i, (term, gene_set) in enumerate(per_term_genes.items()):
+            mask = norm_names.isin(gene_set)
+            sub = results[mask]
+            ax.scatter(sub["logFC"], nlp[mask], color="black", s=18, alpha=0.9, zorder=3)
+            for _, row in sub.iterrows():
+                ax.annotate(row["gene_name"],
+                            (row["logFC"], -np.log10(row["FDR"])),
+                            fontsize=6, ha="left", va="bottom",
+                            xytext=(2, 2), textcoords="offset points",
+                            clip_on=True)
+            legend_handles.append(mpatches.Patch(color="black", label=term))
 
-def consistent_outlier_prefixes(merged_df: pd.DataFrame, comparing: Tuple[str, str], prefix_threshold: int = 5):
-    def extract_prefix(gene_name):
-            # Leading letters up to first digit or hyphen: RPS27→RPS, MT-CO1→MT, ATP5F1A→ATP
-            m = re.match(r'^([A-Z]+)', gene_name)
-            return m.group(1) if m else gene_name
-    for side in comparing:
-        all5 = merged_df[
-            merged_df[[c for c in merged_df.columns if c.endswith(f"_{side}_outliers")]].all(axis=1)
-        ].index.tolist()
+    ax.set_xlabel(f"log\u2082 fold change ({side2} / {side1})")
+    ax.set_ylabel("\u2212log\u2081\u2080(FDR)")
+    ax.set_title(f"Volcano: {side1} vs {side2} (FDR < {fdr_thresh})")
+    ax.legend(handles=legend_handles, fontsize=8)
+    plt.tight_layout()
+    plt.show()
 
-        prefixes = pd.Series(all5).apply(extract_prefix)
-        prefix_counts = prefixes.value_counts()
+def plot_differential_metrics(results: pd.DataFrame, comparing: Tuple[str, str], fdr_thresh: float):
+    side1, side2 = comparing
 
-        with open(f"{side}_outliers/enriched_prefixes.txt", "w") as f:
-            for prefix in sorted(prefix_counts.index.tolist()):
-                f.write(f"{prefix}\n")
+    sig = results["FDR"] < fdr_thresh
+    pos = sig & (results["logFC"] > 0)   # higher in side 2
+    neg = sig & (results["logFC"] < 0)   # higher in side 2
 
-        prefix_counts_filtered = prefix_counts[prefix_counts > prefix_threshold].sort_values(ascending=False)
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    specs = [
+        ("gene_length", "Gene length (log10 bp)",  True),
+        ("gc_content",  "GC content (%)",           False),
+    ]
+    for ax, (col, xlabel, log_x) in zip(axes, specs):
+        x = np.log10(results[col]) if log_x else results[col]
+        ax.scatter(x[~sig], results.loc[~sig,  "logFC"], c="grey",    s=3, alpha=0.2, label="n.s.")
+        ax.scatter(x[neg],  results.loc[neg,   "logFC"], c="#1f77b4", s=5, alpha=0.5, label=f"Higher in {side1}")
+        ax.scatter(x[pos],  results.loc[pos,   "logFC"], c="#d62728", s=5, alpha=0.5, label=f"Higher in {side2}")
+        ax.axhline(0, color="black", linewidth=0.5)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(f"log\u2082 FC ({side2} / {side1})")
+        ax.legend(fontsize=8, markerscale=2)
 
-        fig, ax = plt.subplots(figsize=(8, max(4, len(prefix_counts_filtered) * 0.35)))
-        ax.barh(prefix_counts_filtered.index[::-1], prefix_counts_filtered.values[::-1])
-        ax.set_xlabel(f"Number of genes in {side} consistently enriched set")
-        ax.set_title(f"Gene name prefixes (n={len(all5)} total, prefixes with >{prefix_threshold} genes)")
-        plt.tight_layout()
-        plt.show()
-        plt.close(fig)
+    plt.suptitle("logFC vs gene properties", fontsize=11)
+    plt.tight_layout()
+    plt.show()
 
-def plot_term_enrichment_bar(ern_results: Tuple[pd.DataFrame, pd.DataFrame], comparing: Tuple[str, str]):
+def plot_differential_biotype(results: pd.DataFrame, comparing: Tuple[str, str]):
+    side1, side2 = comparing
+
+    def assign_biotype(row):
+        if row.get("is_mito", False): return "mito"
+        if row.get("is_ribo", False): return "ribo"
+        if row.get("is_pc",   False): return "pc"
+        if row.get("is_lnc",  False): return "lnc"
+        return "other"
+
+    results["biotype"] = results.apply(assign_biotype, axis=1)
+    order = ["mito", "ribo", "pc", "lnc", "other"]
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    vdata = [results.loc[results["biotype"] == bio, "logFC"].dropna().values for bio in order]
+    ax.violinplot(vdata, positions=range(len(order)), showmedians=True, widths=0.6)
+
+    y_top = max(results["logFC"].max(), 1) * 1.05
+    for pos, data in enumerate(vdata):
+        ax.text(pos, y_top, f"n={len(data)}", ha="center", va="bottom", fontsize=8)
+
+    ax.set_xticks(range(len(order)))
+    ax.set_xticklabels(order)
+    ax.axhline(0, color="black", linewidth=0.5)
+    ax.set_ylabel(f"log\u2082 FC ({side2} / {side1})")
+    ax.set_title("logFC distribution by biotype")
+    plt.tight_layout()
+    plt.show()
+
+def _plot_term_enrichment_bar(ern_results: Tuple[pd.DataFrame, pd.DataFrame], comparing: Tuple[str, str]):
     side1, side2 = comparing
 
     DB_COLORS = {
@@ -245,3 +294,56 @@ def plot_term_enrichment_bar(ern_results: Tuple[pd.DataFrame, pd.DataFrame], com
     plt.tight_layout()
     plt.show()
     plt.close(fig)
+
+def enrichment_analysis(combined: pd.DataFrame, results: pd.DataFrame, comparing: Tuple[str,str], fdr_thresh: float, enr_adjP_thresh: float = 0.05):
+    sig_side1   = results.loc[(results["FDR"] < fdr_thresh) & (results["logFC"] < 0), "gene_name"].tolist()
+    sig_side2 = results.loc[(results["FDR"] < fdr_thresh) & (results["logFC"] > 0), "gene_name"].tolist()
+    background = combined.index
+    sig_genes = (sig_side1, sig_side2)
+
+    enrichment_results = []
+    for gene_list, side in zip(sig_genes, comparing):
+        # Get genes consistently enriched
+        enr = gp.enrichr(
+            gene_list=gene_list,
+            gene_sets=['GO_Biological_Process_2026', 'GO_Molecular_Function_2026',
+                    'KEGG_2021_Human', 'MSigDB_Hallmark_2020', 'GO_Cellular_Component_2026'],
+            background=background,   
+            outdir=None,
+            verbose=False,
+        )
+
+        enr_results = enr.results[enr.results['Adjusted P-value'] < enr_adjP_thresh].sort_values('Adjusted P-value')
+        enr_results.to_csv(f"{side}_outliers/enrichment_results.csv")
+        enrichment_results.append(enr_results)
+
+    _plot_term_enrichment_bar(enrichment_results, comparing)
+
+def find_sig_prefixes(results: pd.DataFrame, comparing: Tuple[str,str], fdr_thresh: float, prefix_threshold: int = 5):
+    def extract_prefix(gene_name):
+        # Leading letters up to first digit or hyphen: RPS27→RPS, MT-CO1→MT, ATP5F1A→ATP
+        m = re.match(r'^([A-Z]+)', gene_name)
+        return m.group(1) if m else gene_name
+
+    sig_side1   = results.loc[(results["FDR"] < fdr_thresh) & (results["logFC"] < 0), "gene_name"].tolist()
+    sig_side2 = results.loc[(results["FDR"] < fdr_thresh) & (results["logFC"] > 0), "gene_name"].tolist()
+    sig_genes = (sig_side1, sig_side2)
+
+    for gene_list, side in zip(sig_genes, comparing):
+        gene_list = [g for g in gene_list if not g.startswith("ENSG")]
+        prefixes = pd.Series(gene_list).apply(extract_prefix)
+        prefix_counts = prefixes.value_counts()
+
+        with open(f"{side}_outliers/enriched_prefixes.txt", "w") as f:
+            for prefix in sorted(prefix_counts.index.tolist()):
+                f.write(f"{prefix}\n")
+
+        prefix_counts_filtered = prefix_counts[prefix_counts > prefix_threshold].sort_values(ascending=False)
+
+        fig, ax = plt.subplots(figsize=(8, max(4, len(prefix_counts_filtered) * 0.35)))
+        ax.barh(prefix_counts_filtered.index[::-1], prefix_counts_filtered.values[::-1])
+        ax.set_xlabel(f"Number of genes in {side} consistently enriched set")
+        ax.set_title(f"Gene name prefixes (n={len(gene_list)} total, prefixes with >{prefix_threshold} genes)")
+        plt.tight_layout()
+        plt.show()
+        plt.close(fig)

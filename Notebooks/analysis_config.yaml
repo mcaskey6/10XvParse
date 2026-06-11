@@ -1,0 +1,14 @@
+Project_Dir: "/home/mcaskey/10XvParse/"
+
+Index_Paths:
+  mmusculus: "Index/mouse"
+  hsapiens: "Index/human"
+
+LogCPM: True
+
+Analysis_2:
+  species: mmusculus
+  assay_10x: 10x
+  10x_type: mini
+  assay_parse: parse_mini
+

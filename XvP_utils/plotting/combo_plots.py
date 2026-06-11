@@ -10,6 +10,7 @@ import pandas as pd
 from scipy.stats import spearmanr, pearsonr
 from matplotlib.colors import LogNorm, Normalize
 from upsetty import Upset
+from typing import Tuple
 from . import processing
 
 
@@ -89,7 +90,7 @@ def plot_filtering_metrics(datasets: list[ad.AnnData]) -> None:
     aligned = np.array([data.uns['n_aligned'] for data in datasets])
     unique = np.array([data.uns['n_unique'] for data in datasets])
     counts = np.array([data.uns['n_raw_counts'] for data in datasets])
-    filtered_counts = np.array([data.X.sum() for data in datasets])
+    filtered_counts = np.array([data.uns['n_raw_counts_filtered'] for data in datasets])
     labels = [data.uns['title'] for data in datasets]
 
     unmapped = processed - aligned
@@ -107,6 +108,28 @@ def plot_filtering_metrics(datasets: list[ad.AnnData]) -> None:
     axs[1].bar(labels, rejected_counts, bottom=filtered_counts, label="Filtered Counts", color="blue")
     axs[1].set_ylabel('Number of Counts')
     axs[1].legend()
+
+def plot_nascent_mature_ratios(datasets: list[ad.AnnData], figsize:Tuple[float,float]=(8,6)) -> None:
+    """Stacked bar charts comparing the ratio of nascent, ambiguous, and mature reads
+
+    Args:
+        datasets: List of AnnData objects with 'percent_nascent', 'percent_ambiguous', 'percent_mature',
+        and 'title' in uns.
+        figsize: Figure size as (width, height)
+    """
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    percent_nascent = np.array([data.uns['percent_nascent'] for data in datasets])
+    percent_ambiguous = np.array([data.uns['percent_ambiguous'] for data in datasets])
+    percent_mature = np.array([data.uns['percent_mature'] for data in datasets])
+    labels = [data.uns['title'] for data in datasets]
+
+    ax.bar(labels, percent_nascent, label="Nascent", color="yellow")
+    ax.bar(labels, percent_ambiguous, bottom=percent_nascent, label="Ambiguous", color="orange")
+    ax.bar(labels, percent_mature, bottom=percent_ambiguous+percent_nascent, label="Mature", color="red")
+    ax.set_ylabel('Percent Counts')
+    ax.legend()
 
 def plot_filtering_metrics_star(datasets: list[ad.AnnData]) -> None:
     """Stacked bar charts comparing STARsolo's filtered vs unfiltered reads.
@@ -139,7 +162,7 @@ def plot_cell_metrics(datasets: list[ad.AnnData], groups: list[str], group_names
         group_names: Display labels for the y-axis of each row.
         figsize: Figure size as (width, height) in inches.
     """
-    fig, ax = plt.subplots(len(groups), len(datasets), figsize=(figsize), sharey='row')
+    fig, ax = plt.subplots(len(groups), len(datasets), squeeze=False, figsize=(figsize), sharey='row')
     for i, data in enumerate(datasets):
         _violin_plots(ax[:, i], data, groups)
 
@@ -254,89 +277,126 @@ def plot_gene_metrics(datasets: list[ad.AnnData], sample_size: int = 1000000) ->
     plt.show()
 
 
-def marker_genes(ax: matplotlib.axes.Axes, data: ad.AnnData, markers: list[str]) -> None:
-    """Violin plot of marker gene expression as a percent of total counts per cell.
+def marker_genes(datasets: list[ad.AnnData], markers: list[str], figsize:Tuple[float,float] = (25,5), plot_title: str = "Marker Genes") -> None:
+    """Grid of violin plots of marker gene expression as a percent of total counts per cell for each dataset in `datasets`
 
     Args:
-        ax: Matplotlib axes to draw on.
-        data: AnnData object with obs containing 'n_counts' and a 'title' key in uns.
+        datasets: List of AnnData objects with 'title' in uns and 'n_counts' in obs
         markers: List of gene names to plot (must be present in data.var_names).
+        figsize: Figure size as (width, height)
+        plot_title: The string to be appended to the technology name in the title
+            of each plot
     """
-    gene_dist = []
-    for gene in markers:
-        gene_dist.append(np.nan_to_num(data[:, gene].X.toarray().transpose()[0] / np.array(data.obs['n_counts'].tolist()) * 100))
 
-    ax.violinplot(gene_dist, showmeans=True)
-    ax.set_xticks(np.arange(1, len(markers) + 1), markers)
-    ax.set_ylabel("")
-    ax.set_title(data.uns['title'] + " Marker Genes")
+    fig, axs = plt.subplots(1, len(datasets), figsize=figsize, sharey=True)
+
+    for ax, data in zip(axs, datasets):
+        gene_dist = []
+        for gene in markers:
+            gene_dist.append(np.nan_to_num(data[:, gene].X.toarray().transpose()[0] / np.array(data.obs['n_counts'].tolist()) * 100))
+
+        ax.violinplot(gene_dist, showmeans=True)
+        ax.set_xticks(np.arange(1, len(markers) + 1), markers)
+        ax.set_ylabel("")
+        ax.set_title(data.uns['title'] + " " +  plot_title)
+
+    axs[0].set_ylabel("% counts")
+
+    plt.tight_layout()
+    plt.show()
 
 
-def collapsed_marker_genes(ax: matplotlib.axes.Axes, data: ad.AnnData, marker_prefixes: list[str]) -> None:
-    """Violin plot of collapsed marker gene family expression per cell.
+def collapsed_marker_genes(datasets: list[ad.AnnData], marker_prefixes: list[str], figsize:Tuple[float,float] = (25,5)) -> None:
+    """Grid of violin plots of collapsed marker gene family expression per cell
+    for datasets in the list 'datasets'
 
     Sums counts across all genes sharing a common prefix, useful when individual
     gene distinctions are not important (e.g. ribosomal protein families).
 
     Args:
-        ax: Matplotlib axes to draw on.
-        data: AnnData object with obs containing 'n_counts' and a 'title' key in uns.
+        datasets: List of AnnData objects with 'title' in uns and 'n_counts' in obs
         marker_prefixes: Gene name prefixes to collapse. Each prefix becomes one
             violin in the plot.
+        figsize: Figure size as (width, height)
     """
-    genes = data.var
+    fig, axs = plt.subplots(1, len(datasets), figsize=figsize, sharey=True)
 
-    gene_dist = []
-    for prefix in marker_prefixes:
-        mask = genes[genes.index.str.startswith(prefix)].index
-        gene_dist.append(np.nan_to_num(data[:, mask].X.toarray().sum(axis=1).transpose() / np.array(data.obs['n_counts'].tolist()) * 100))
+    for ax, data in zip(axs, datasets):
+        genes = data.var
+        gene_dist = []
+        for prefix in marker_prefixes:
+            mask = genes[genes.index.str.startswith(prefix)].index
+            gene_dist.append(np.nan_to_num(data[:, mask].X.toarray().sum(axis=1).transpose() / np.array(data.obs['n_counts'].tolist()) * 100))
 
-    ax.violinplot(gene_dist, showmeans=True)
-    ax.set_xticks(np.arange(1, len(marker_prefixes) + 1), marker_prefixes)
-    ax.set_ylabel("")
-    ax.set_title(data.uns['title'] + " Thymus Marker Genes")
+        ax.violinplot(gene_dist, showmeans=True)
+        ax.set_xticks(np.arange(1, len(marker_prefixes) + 1), marker_prefixes)
+        ax.set_ylabel("")
+        ax.set_title(data.uns['title'] + " Thymus Marker Genes")
+    axs[0].set_ylabel("% counts")
+
+    plt.tight_layout()
+    plt.show()
 
 
-def top_gene_cell_expression(ax: matplotlib.axes.Axes, data: ad.AnnData) -> None:
-    """Violin plot of the top 10 genes by number of cells expressing them.
+def top_gene_cell_expression(datasets: list[ad.AnnData], figsize: Tuple[float,float] = (25,5)) -> None:
+    """Grid of violin plots of the top 10 genes by number of cells expressing them.
 
     Args:
-        ax: Matplotlib axes to draw on.
-        data: AnnData object with var containing 'n_cells' and obs containing
-            'n_counts'. Must have a 'title' key in uns.
+        datasets: List of AnnData objects with 'title' in uns, 'n_counts' in obs, 
+            and'n_cells' in var.
+        figsize: Figure size as (width, height)
     """
-    genes = data.var
-    top_genes = genes.sort_values(by='n_cells', ascending=False).head(10).index
+    fig, axs = plt.subplots(1, len(datasets), figsize=figsize, sharey=True)
 
-    gene_dist = []
-    for gene in top_genes:
-        gene_dist.append(np.nan_to_num(data[:, gene].X.toarray().transpose()[0] / np.array(data.obs['n_counts'].tolist()) * 100))
+    for ax, data in zip(axs, datasets):
+        genes = data.var
+        top_genes = genes.sort_values(by='n_cells', ascending=False).head(10).index
 
-    ax.violinplot(gene_dist, showmeans=True)
-    ax.set_xticks(np.arange(1, len(top_genes) + 1), top_genes)
-    ax.set_ylabel("")
-    ax.set_title(data.uns['title'] + " Top 10 Genes by Cell Expression")
+        gene_dist = []
+        for gene in top_genes:
+            gene_dist.append(np.nan_to_num(data[:, gene].X.toarray().transpose()[0] / np.array(data.obs['n_counts'].tolist()) * 100))
+
+        ax.violinplot(gene_dist, showmeans=True)
+        ax.set_xticks(np.arange(1, len(top_genes) + 1), top_genes)
+        ax.set_ylabel("")
+        ax.set_title(data.uns['title'] + " Top 10 Genes by Cell Expression")
+        
+
+    axs[0].set_ylabel("% counts")
+
+    plt.tight_layout()
+    plt.show()
 
 
-def top_gene_counts(ax: matplotlib.axes.Axes, data: ad.AnnData) -> None:
-    """Violin plot of the top 10 genes by total percent counts.
+def top_gene_counts(datasets: list[ad.AnnData], figsize: Tuple[float,float] = (25,5)) -> None:
+    """Grid of violin plots of the top 10 genes by total percent counts.
 
     Args:
-        ax: Matplotlib axes to draw on.
-        data: AnnData object with var containing 'percent_counts' and obs containing
-            'n_counts'. Must have a 'title' key in uns.
+        datasets: List of AnnData objects with 'title' in uns, 'n_counts' in obs, and
+            'percent_counts' in var.
+        figsize: Figure size as (width, height)
     """
-    genes = data.var
-    top_genes = genes.sort_values(by='percent_counts', ascending=False).head(10).index
 
-    gene_dist = []
-    for gene in top_genes:
-        gene_dist.append(np.nan_to_num(data[:, gene].X.toarray().transpose()[0] / np.array(data.obs['n_counts'].tolist()) * 100))
+    fig, axs = plt.subplots(1, len(datasets), figsize=figsize, sharey=True)
 
-    ax.violinplot(gene_dist, showmeans=True)
-    ax.set_xticks(np.arange(1, len(top_genes) + 1), top_genes)
-    ax.set_ylabel("")
-    ax.set_title(data.uns['title'] + " Top 10 Genes by Total Counts")
+    for ax, data in zip(axs, datasets):
+        genes = data.var
+        top_genes = genes.sort_values(by='percent_counts', ascending=False).head(10).index
+
+        gene_dist = []
+        for gene in top_genes:
+            gene_dist.append(np.nan_to_num(data[:, gene].X.toarray().transpose()[0] / np.array(data.obs['n_counts'].tolist()) * 100))
+
+        ax.violinplot(gene_dist, showmeans=True)
+        ax.set_xticks(np.arange(1, len(top_genes) + 1), top_genes)
+        ax.set_ylabel("")
+        ax.set_title(data.uns['title'] + " Top 10 Genes by Total Counts")
+        
+
+    axs[0].set_ylabel("% counts")
+
+    plt.tight_layout()
+    plt.show()
 
 
 def scatter_genes(ax: matplotlib.axes.Axes, shared_data: pd.DataFrame, data_x: ad.AnnData, data_y: ad.AnnData,
@@ -405,7 +465,7 @@ def cat_scatter_genes(ax: matplotlib.axes.Axes, shared_data: pd.DataFrame, data_
                       y_percent,
                       s=50,
                       alpha=0.5,
-                      c=color,
+                      color=color,
                       label=label)
 
     ax.set_xlabel(data_x.uns['title'] + ' Gene Percent Count')
@@ -661,12 +721,14 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
                            enrichment_path: str | Path,
                            gene_sets: list[str] | None = None,
                            terms: list[str] | None = None,
-                           n_cooks: int = 10, n_log_ratio: int = 10, min_pct: float = 0.1) -> None:
+                           n_cooks: int = 10, n_log_ratio: int = 10, min_pct: float = 0.1,
+                           label_enriched: bool = False) -> None:
     """Four-panel comparison scatter plot highlighting genes from GO enrichment terms.
 
-    Genes belonging to the union of selected enrichment terms are drawn in blue;
-    all others are drawn in light grey. The enrichment CSV must be in the format
-    produced by gseapy.enrichr (columns: Gene_set, Term, Genes with semicolons).
+    Each selected term is drawn in a distinct colour (tab10 palette cycling); all
+    other genes are drawn in light grey. When a gene belongs to multiple terms it
+    takes the colour of the last term rendered. The enrichment CSV must be in the
+    format produced by gseapy.enrichr (columns: Gene_set, Term, Genes with semicolons).
 
     Gene names are normalised before matching so that mouse (e.g. Rpl4) and barnyard
     (e.g. HUMAN_RPL4, MOUSE_Rpl4) datasets correctly map to HGNC symbols in the CSV.
@@ -682,6 +744,8 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
         n_log_ratio: Number of top genes by absolute log percent ratio to label.
         min_pct: Genes where both percent_counts are below this value are excluded
             from the log-ratio ranking.
+        label_enriched: If True, annotate every gene belonging to any selected term
+            with its gene name, in addition to the top Cook's/log-ratio labels.
     """
     def _norm(name: str) -> str:
         for prefix in ("HUMAN_", "MOUSE_"):
@@ -695,25 +759,39 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
     if terms is not None:
         enr_df = enr_df[enr_df['Term'].isin(terms)]
 
-    enriched_genes: set[str] = set()
-    for gene_str in enr_df['Genes']:
-        enriched_genes.update(gene_str.split(';'))
+    per_term_genes: dict[str, set[str]] = {}
+    for _, row in enr_df.iterrows():
+        t = row['Term']
+        if t not in per_term_genes:
+            per_term_genes[t] = set()
+        per_term_genes[t].update(_norm(g) for g in row['Genes'].split(';'))
+    selected_terms = list(per_term_genes.keys())
 
-    selected_terms = enr_df['Term'].unique().tolist()
-    label = ', '.join(selected_terms)
-    if len(label) > 60:
-        label = label[:60] + '…'
+    cmap = matplotlib.colormaps.get_cmap('tab10')
+    colors = [cmap(i % 10) for i in range(len(selected_terms))]
+
+    all_enriched: set[str] = set().union(*per_term_genes.values()) if per_term_genes else set()
 
     fig, axs = plt.subplots(1, 4, figsize=(25, 5))
 
     for ax, df, pair in zip(axs, compare_dfs, comparisons):
-        is_enriched = df['gene_name'].apply(_norm).isin(enriched_genes)
+        norm_names = df['gene_name'].apply(_norm)
         cat_scatter_genes(ax, df, pair[0], pair[1], 'lightgrey', xlim=lim, ylim=lim)
-        cat_scatter_genes(ax, df[is_enriched], pair[0], pair[1],
-                          'blue', label=label, xlim=lim, ylim=lim)
+
+        for term, color in zip(selected_terms, colors):
+            mask = norm_names.isin(per_term_genes[term])
+            cat_scatter_genes(ax, df[mask], pair[0], pair[1],
+                              color, label=term, xlim=lim, ylim=lim)
 
         show_correlation(ax, df)
         _label_genes(ax, df, n_cooks, n_log_ratio, min_pct)
+
+        if label_enriched:
+            for idx in df[norm_names.isin(all_enriched)].index:
+                row = df.loc[idx]
+                ax.annotate(row['gene_name'],
+                            (row['percent_counts_x'], row['percent_counts_y']),
+                            fontsize=7, ha='left', va='bottom', clip_on=True)
 
     axs[0].legend()
 

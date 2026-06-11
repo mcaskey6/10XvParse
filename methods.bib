@@ -1,0 +1,296 @@
+% ---------------------------------------------------------------------------
+% methods.bib  --  references for the Methods section (methods.tex)
+%
+% Entries verified where I was confident; please double-check page numbers,
+% volume/issue, and DOIs against the publisher before submission. Items marked
+% "TODO: VERIFY" are the most likely to need correcting (release years, exact
+% titles). seqtk and Ensembl in particular are version/URL-dependent.
+% ---------------------------------------------------------------------------
+
+% --- Data archives -------------------------------------------------------
+
+@article{leinonen2011sra,
+  author  = {Leinonen, Rasko and Sugawara, Hideaki and Shumway, Martin and
+             {International Nucleotide Sequence Database Collaboration}},
+  title   = {The {Sequence Read Archive}},
+  journal = {Nucleic Acids Research},
+  year    = {2011},
+  volume  = {39},
+  number  = {Database issue},
+  pages   = {D19--D21},
+  doi     = {10.1093/nar/gkq1019},
+}
+
+% Ensembl: cite the release-year database paper matching the release(s) you used
+% (GRCh38 rel. 112/115, GRCm39 rel. 115). The 2024 NAR Ensembl paper is below;
+% swap for the appropriate-year citation if your journal prefers it.
+% TODO: VERIFY which Ensembl reference your target journal expects.
+@article{ensembl,
+  author  = {Harrison, Peter W. and Amode, M. Ridwan and Austine-Orimoloye, Olanrewaju and others},
+  title   = {Ensembl 2024},
+  journal = {Nucleic Acids Research},
+  year    = {2024},
+  volume  = {52},
+  number  = {D1},
+  pages   = {D891--D899},
+  doi     = {10.1093/nar/gkad1049},
+}
+
+% --- Read processing / barcodes -----------------------------------------
+
+@article{sullivan2024splitcode,
+  author  = {Sullivan, Delaney K. and Pachter, Lior},
+  title   = {Flexible parsing, interpretation, and editing of technical
+             sequences with {splitcode}},
+  journal = {Bioinformatics},
+  year    = {2024},
+  volume  = {40},
+  number  = {7},
+  pages   = {btae331},
+  doi     = {10.1093/bioinformatics/btae331},
+}
+
+@misc{seqtk,
+  author       = {Li, Heng},
+  title        = {{seqtk}: Toolkit for processing sequences in {FASTA/Q} formats},
+  howpublished = {\url{https://github.com/lh3/seqtk}},
+  note         = {version 1.2-r94},
+  year         = {2023},
+}
+
+% --- Pseudoalignment / quantification (kb-python = kallisto|bustools) -----
+
+@article{bray2016kallisto,
+  author  = {Bray, Nicolas L. and Pimentel, Harold and Melsted, P{\'a}ll and
+             Pachter, Lior},
+  title   = {Near-optimal probabilistic {RNA}-seq quantification},
+  journal = {Nature Biotechnology},
+  year    = {2016},
+  volume  = {34},
+  number  = {5},
+  pages   = {525--527},
+  doi     = {10.1038/nbt.3519},
+}
+
+@article{melsted2021bustools,
+  author  = {Melsted, P{\'a}ll and Booeshaghi, A. Sina and Liu, Lauren and others},
+  title   = {Modular, efficient and constant-memory single-cell {RNA}-seq
+             preprocessing},
+  journal = {Nature Biotechnology},
+  year    = {2021},
+  volume  = {39},
+  number  = {7},
+  pages   = {813--818},
+  doi     = {10.1038/s41587-021-00870-2},
+}
+
+% kb-python nascent/mature (nac) workflow.
+% TODO: VERIFY -- confirm this is the reference you want for the kb-python nac
+% workflow (the kb-python wrapper is often cited via Melsted 2021 above).
+@article{sullivan2023kb,
+  author  = {Sullivan, Delaney K. and Min, Kyung Hoi (Joseph) and Hj
+             {\"o}rleifsson, Kristj{\'a}n Eldj{\'a}rn and others},
+  title   = {Kallisto, bustools, and kb-python for quantifying bulk, single-cell,
+             and single-nucleus {RNA}-seq},
+  journal = {bioRxiv},
+  year    = {2023},
+  doi     = {10.1101/2023.11.21.568164},
+}
+
+% --- Genome alignment / BAM / annotation ---------------------------------
+
+@article{dobin2013star,
+  author  = {Dobin, Alexander and Davis, Carrie A. and Schlesinger, Felix and others},
+  title   = {{STAR}: ultrafast universal {RNA}-seq aligner},
+  journal = {Bioinformatics},
+  year    = {2013},
+  volume  = {29},
+  number  = {1},
+  pages   = {15--21},
+  doi     = {10.1093/bioinformatics/bts635},
+}
+
+@article{danecek2021samtools,
+  author  = {Danecek, Petr and Bonfield, James K. and Liddle, Jennifer and others},
+  title   = {Twelve years of {SAMtools} and {BCFtools}},
+  journal = {GigaScience},
+  year    = {2021},
+  volume  = {10},
+  number  = {2},
+  pages   = {giab008},
+  doi     = {10.1093/gigascience/giab008},
+}
+
+@article{pertea2020gffread,
+  author  = {Pertea, Geo and Pertea, Mihaela},
+  title   = {{GFF} Utilities: {GffRead} and {GffCompare}},
+  journal = {F1000Research},
+  year    = {2020},
+  volume  = {9},
+  pages   = {304},
+  doi     = {10.12688/f1000research.23297.2},
+}
+
+@article{wang2012rseqc,
+  author  = {Wang, Liguo and Wang, Shengqin and Li, Wei},
+  title   = {{RSeQC}: quality control of {RNA}-seq experiments},
+  journal = {Bioinformatics},
+  year    = {2012},
+  volume  = {28},
+  number  = {16},
+  pages   = {2184--2185},
+  doi     = {10.1093/bioinformatics/bts356},
+}
+
+% --- Complexity / housekeeping -------------------------------------------
+
+@article{daley2013preseq,
+  author  = {Daley, Timothy and Smith, Andrew D.},
+  title   = {Predicting the molecular complexity of sequencing libraries},
+  journal = {Nature Methods},
+  year    = {2013},
+  volume  = {10},
+  number  = {4},
+  pages   = {325--327},
+  doi     = {10.1038/nmeth.2375},
+}
+
+@article{hounkpe2021hrt,
+  author  = {Hounkpe, Bidossessi Wilfried and Chenou, Francine and
+             de Lima, Franciele and De Paula, Erich V.},
+  title   = {{HRT Atlas v1.0} database: redefining human and mouse housekeeping
+             genes and candidate reference transcripts by mining massive
+             {RNA}-seq datasets},
+  journal = {Nucleic Acids Research},
+  year    = {2021},
+  volume  = {49},
+  number  = {D1},
+  pages   = {D947--D955},
+  doi     = {10.1093/nar/gkaa609},
+}
+
+% --- Downstream single-cell analysis -------------------------------------
+
+@article{wolf2018scanpy,
+  author  = {Wolf, F. Alexander and Angerer, Philipp and Theis, Fabian J.},
+  title   = {{SCANPY}: large-scale single-cell gene expression data analysis},
+  journal = {Genome Biology},
+  year    = {2018},
+  volume  = {19},
+  pages   = {15},
+  doi     = {10.1186/s13059-017-1382-0},
+}
+
+% AnnData. TODO: VERIFY -- the anndata software paper (Virshup et al.) was
+% published in J. Open Source Software in 2024; confirm volume/pages/DOI.
+@article{virshup2024anndata,
+  author  = {Virshup, Isaac and Rybakov, Sergei and Theis, Fabian J. and
+             Angerer, Philipp and Wolf, F. Alexander},
+  title   = {anndata: Access and store annotated data matrices},
+  journal = {Journal of Open Source Software},
+  year    = {2024},
+  volume  = {9},
+  number  = {101},
+  pages   = {4371},
+  doi     = {10.21105/joss.04371},
+}
+
+@article{wolock2019scrublet,
+  author  = {Wolock, Samuel L. and Lopez, Romain and Klein, Allon M.},
+  title   = {{Scrublet}: Computational Identification of Cell Doublets in
+             Single-Cell Transcriptomic Data},
+  journal = {Cell Systems},
+  year    = {2019},
+  volume  = {8},
+  number  = {4},
+  pages   = {281--291.e9},
+  doi     = {10.1016/j.cels.2018.11.005},
+}
+
+@article{cock2009biopython,
+  author  = {Cock, Peter J. A. and Antao, Tiago and Chang, Jeffrey T. and others},
+  title   = {{Biopython}: freely available {Python} tools for computational
+             molecular biology and bioinformatics},
+  journal = {Bioinformatics},
+  year    = {2009},
+  volume  = {25},
+  number  = {11},
+  pages   = {1422--1423},
+  doi     = {10.1093/bioinformatics/btp163},
+}
+
+@inproceedings{seabold2010statsmodels,
+  author    = {Seabold, Skipper and Perktold, Josef},
+  title     = {statsmodels: Econometric and statistical modeling with {Python}},
+  booktitle = {Proceedings of the 9th Python in Science Conference (SciPy)},
+  year      = {2010},
+  pages     = {92--96},
+  doi       = {10.25080/Majora-92bf1922-011},
+}
+
+% --- Differential expression (edgeR) -------------------------------------
+
+@article{robinson2010edger,
+  author  = {Robinson, Mark D. and McCarthy, Davis J. and Smyth, Gordon K.},
+  title   = {{edgeR}: a {Bioconductor} package for differential expression
+             analysis of digital gene expression data},
+  journal = {Bioinformatics},
+  year    = {2010},
+  volume  = {26},
+  number  = {1},
+  pages   = {139--140},
+  doi     = {10.1093/bioinformatics/btp616},
+}
+
+@article{robinson2010tmm,
+  author  = {Robinson, Mark D. and Oshlack, Alicia},
+  title   = {A scaling normalization method for differential expression analysis
+             of {RNA}-seq data},
+  journal = {Genome Biology},
+  year    = {2010},
+  volume  = {11},
+  number  = {3},
+  pages   = {R25},
+  doi     = {10.1186/gb-2010-11-3-r25},
+}
+
+% Quasi-likelihood F-test workflow (glmQLFit / glmQLFTest).
+% TODO: VERIFY -- some authors instead cite Lun, Chen & Smyth (2016),
+% "It's DE-licious", Methods Mol Biol 1418:391-416.
+@article{chen2016edger,
+  author  = {Chen, Yunshun and Lun, Aaron T. L. and Smyth, Gordon K.},
+  title   = {From reads to genes to pathways: differential expression analysis of
+             {RNA}-Seq experiments using {Rsubread} and the {edgeR}
+             quasi-likelihood pipeline},
+  journal = {F1000Research},
+  year    = {2016},
+  volume  = {5},
+  pages   = {1438},
+  doi     = {10.12688/f1000research.8987.2},
+}
+
+% --- Enrichment ----------------------------------------------------------
+
+@article{fang2023gseapy,
+  author  = {Fang, Zhuoqing and Liu, Xinyuan and Peltz, Gary},
+  title   = {{GSEApy}: a comprehensive package for performing gene set enrichment
+             analysis in {Python}},
+  journal = {Bioinformatics},
+  year    = {2023},
+  volume  = {39},
+  number  = {1},
+  pages   = {btac757},
+  doi     = {10.1093/bioinformatics/btac757},
+}
+
+@article{kuleshov2016enrichr,
+  author  = {Kuleshov, Maxim V. and Jones, Matthew R. and Rouillard, Andrew D. and others},
+  title   = {{Enrichr}: a comprehensive gene set enrichment analysis web server
+             2016 update},
+  journal = {Nucleic Acids Research},
+  year    = {2016},
+  volume  = {44},
+  number  = {W1},
+  pages   = {W90--W97},
+  doi     = {10.1093/nar/gkw377},
+}

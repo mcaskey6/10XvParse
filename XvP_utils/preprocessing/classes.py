@@ -201,7 +201,7 @@ class TenXPaths(BasePaths):
         base = BasePaths.build(settings, config, assay)
         sampled_dir= base.fasta_dir / "Sampled"
         index_dir = settings.root_dir / "Index" / config.species
-        kb_sub_dir= base.kb_dir / "sampled_out"
+        kb_sub_dir = base.kb_dir / "sampled_10x_out"
         star_dir = base.outdir / "STARsolo"
         star_index_dir = settings.root_dir / "Index" / f"{config.species}_STAR"
         kb_onlist = base.config_dir / "10x_info" / f"{config.technology}_whitelist.txt"

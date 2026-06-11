@@ -38,7 +38,7 @@ def subsample_mini(settings: RunSettings, config_file: str, logger: Logger) -> N
         parse_assays=["parse_mini"],
         logger=logger,
     )
-    subsample_10x(settings, config_file, subsample_num_mini, logger, tag="mini")
+    subsample_10x(settings, config_file, "10x", subsample_num_mini, logger, tag="mini")
     subsample_parse(settings, config_file, "parse_mini", subsample_num_mini, logger)
 
 
