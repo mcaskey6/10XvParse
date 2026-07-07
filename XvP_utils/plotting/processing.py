@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import warnings
 import anndata as ad
 import scanpy as sc
 import numpy as np
@@ -9,8 +10,57 @@ import os
 from Bio import SeqIO
 import scrublet as scr
 import statsmodels.api as sm
-from scipy.stats import gaussian_kde
+from scipy.stats import gaussian_kde, entropy
 import pandas as pd
+import urllib.request
+import urllib.parse
+import io
+
+_ORTHOLOGS: dict[str, str] | None = None
+
+def _load_orthologs(cache_dir: Path | None = None) -> dict[str, str]:
+    global _ORTHOLOGS
+    if _ORTHOLOGS is not None:
+        return _ORTHOLOGS
+
+    if cache_dir is None:
+        cache_dir = Path(__file__).parent
+    cache_path = cache_dir / "orthologs.csv"
+
+    if cache_path.exists():
+        df = pd.read_csv(cache_path)
+    else:
+        xml = ('<?xml version="1.0" encoding="UTF-8"?>'
+               '<!DOCTYPE Query>'
+               '<Query virtualSchemaName="default" formatter="TSV" header="1"'
+               ' uniqueRows="1" count="" datasetConfigVersion="0.6">'
+               '<Dataset name="mmusculus_gene_ensembl" interface="default">'
+               '<Attribute name="external_gene_name"/>'
+               '<Attribute name="hsapiens_homolog_associated_gene_name"/>'
+               '</Dataset></Query>')
+        url = "https://www.ensembl.org/biomart/martservice?query=" + urllib.parse.quote(xml)
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            raw = resp.read().decode("utf-8")
+        df = pd.read_csv(io.StringIO(raw), sep="\t")
+        df.columns = ["mouse_symbol", "human_symbol"]
+        df = df.dropna(subset=["mouse_symbol", "human_symbol"])
+        df = df[(df["mouse_symbol"] != "") & (df["human_symbol"] != "")]
+        df = df.drop_duplicates()
+        df.to_csv(cache_path, index=False)
+
+    _ORTHOLOGS = dict(zip(df["mouse_symbol"], df["human_symbol"]))
+    return _ORTHOLOGS
+
+
+def _normalize_gene_name(name: str, orthologs: dict[str, str]) -> str:
+    for prefix in ("HUMAN_", "MOUSE_"):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    name = re.sub(r"\s*\(.*$", "", name).strip()
+    if name in orthologs:
+        return orthologs[name].upper()
+    return name.upper()
 
 
 def init_processing(data_name: str, assay: str, project_dir: str, analysis_name: str, data_title: str = None, type: str = "", modified: bool = False, sampled: bool = True) -> ad.AnnData:
@@ -106,6 +156,7 @@ def init_processing(data_name: str, assay: str, project_dir: str, analysis_name:
     data.var['n_cells'] = data.X.astype(bool).sum(axis=0).A1
     data.obs['n_counts'] = data.X.sum(axis=1).A1
     data.var['percent_counts'] = data.X.sum(axis=0).A1 / data.uns["n_raw_counts"] * 100
+    data.uns['n_genes'] = data.X.astype(bool).sum()
 
     data.uns['percent_nascent'] = data.layers['nascent'].sum() / data.uns["n_raw_counts"] * 100 
     data.uns['percent_ambiguous'] = data.layers['ambiguous'].sum() / data.uns["n_raw_counts"] * 100
@@ -134,6 +185,7 @@ def refilter(raw_data: ad.AnnData, min_counts: int, transform: bool = False) -> 
     sc.pp.filter_genes(data, min_cells=1)
 
     data.uns['n_raw_counts_filtered'] = data.X.sum()
+    data.uns['n_genes'] = data.X.astype(bool).sum()
 
     data.uns['percent_nascent'] = data.layers['nascent'].sum() / data.uns["n_raw_counts_filtered"] * 100 
     data.uns['percent_ambiguous'] = data.layers['ambiguous'].sum() / data.uns["n_raw_counts_filtered"] * 100
@@ -196,6 +248,18 @@ def upsample(datasets: list[ad.AnnData], output_dir: Path, overwrite: bool = Fal
         print("PreSeq output already exists for all datasets.")
 
 
+def _warn_unmatched(left_names: set, right_names: set,
+                    caller: str, left_label: str, right_label: str) -> None:
+    """Warn about gene names present in one set but not the other."""
+    missing = left_names - right_names
+    if missing:
+        names = sorted(missing)
+        warnings.warn(
+            f"{caller}: {len(missing)} genes in {left_label} "
+            f"but missing from {right_label}:\n  {names}"
+        )
+
+
 def _biotype_from_gtf(gtf_path: Path) -> pd.DataFrame:
     """Extract gene biotype annotations from a GTF file.
 
@@ -239,17 +303,61 @@ def _biotype_from_gtf(gtf_path: Path) -> pd.DataFrame:
         "HUMAN_RPS", "HUMAN_RPL", "HUMAN_MRPS", "HUMAN_MRPL",
     ))
     df['is_oxphos'] = df['gene_name'].str.startswith((
-        "Sdh",  "Uqcr", "Cox",  "Nduf", "Atp",
-        "SDH",  "UQCR", "COX",  "NDUF", "ATP",
-        "MOUSE_Sdh",  "MOUSE_Uqcr", "MOUSE_Cox",  "MOUSE_Nduf", "MOUSE_Atp",
-        "HUMAN_SDH",  "HUMAN_UQCR", "HUMAN_COX",  "HUMAN_NDUF", "HUMAN_ATP",
-        "mt-Nd", "mt-Co", "mt-Atp", "mt-Cytb",
-        "MT-ND", "MT-CO", "MT-ATP", "MT-CYB",
-        "MOUSE_mt-Nd", "MOUSE_mt-Co", "MOUSE_mt-Atp", "MOUSE_mt-Cytb",
-        "HUMAN_MT-ND", "HUMAN_MT-CO", "HUMAN_MT-ATP", "HUMAN_MT-CYB",
+        "Sdh",  "Uqcr", "Cox",  "Nduf", "Atp5",
+        "SDH",  "UQCR", "COX",  "NDUF", "ATP5",
+        "MOUSE_Sdh",  "MOUSE_Uqcr", "MOUSE_Cox",  "MOUSE_Nduf", "MOUSE_Atp5",
+        "HUMAN_SDH",  "HUMAN_UQCR", "HUMAN_COX",  "HUMAN_NDUF", "HUMAN_ATP5",
+        # "mt-Nd", "mt-Co", "mt-Atp", "mt-Cytb",
+        # "MT-ND", "MT-CO", "MT-ATP", "MT-CYB",
+        # "MOUSE_mt-Nd", "MOUSE_mt-Co", "MOUSE_mt-Atp", "MOUSE_mt-Cytb",
+        # "HUMAN_MT-ND", "HUMAN_MT-CO", "HUMAN_MT-ATP", "HUMAN_MT-CYB",
     ))
+    df['is_pseudo'] = df['gene_biotype'].str.contains('pseudogene', case=False)
     df.drop('gene_biotype', axis=1, inplace=True)
     return df
+
+
+def annotate_gene_set(gene_info: pd.DataFrame, csv_path: Path,
+                      gene_set: str, col_name: str,
+                      term: str | None = None) -> None:
+    """Add a boolean column to gene_info by matching against a named gene set CSV.
+
+    Reads all rows in the CSV whose Gene_set column equals gene_set, collects
+    every gene name across those rows, and matches case-insensitively (stripping
+    HUMAN_/MOUSE_ prefixes) against gene_info['gene_name'].
+
+    Args:
+        gene_info: DataFrame to annotate in place. Must contain 'gene_name'.
+        csv_path: Path to the gene sets CSV (columns: Gene_set, Term, Genes
+            with semicolon-separated names).
+        gene_set: Value to match in the Gene_set column (e.g. "Transcription Factors").
+        col_name: Name of the boolean column to add (e.g. "is_tf").
+        term: If provided, further restrict to rows whose Term column equals
+            this value (e.g. "Human" or "Mouse").
+    """
+    def _norm(name: str) -> str:
+        for prefix in ("HUMAN_", "MOUSE_"):
+            if name.startswith(prefix):
+                return name[len(prefix):].upper()
+        return name.upper()
+
+    enr_df = pd.read_csv(csv_path, index_col=0)
+    enr_df = enr_df[enr_df['Gene_set'] == gene_set]
+    if term is not None:
+        enr_df = enr_df[enr_df['Term'] == term]
+
+    ref_names: set[str] = set()
+    for _, row in enr_df.iterrows():
+        ref_names.update(_norm(g) for g in row['Genes'].split(';'))
+
+    norm_info = gene_info['gene_name'].apply(_norm)
+    gene_info[col_name] = norm_info.isin(ref_names)
+
+    label = f'"{gene_set}"' + (f' / "{term}"' if term else "")
+    _warn_unmatched(ref_names, set(norm_info), "annotate_gene_set", label, "gene_info")
+
+    n = gene_info[col_name].sum()
+    print(f"annotate_gene_set: {n}/{len(ref_names)} {label} genes matched → '{col_name}'")
 
 
 def _query_from_fasta(cdna_fasta: Path, t2g: Path) -> pd.DataFrame:
@@ -275,38 +383,38 @@ def _query_from_fasta(cdna_fasta: Path, t2g: Path) -> pd.DataFrame:
 
     t2g_df = pd.read_csv(t2g, sep="\t", header=None,
                          usecols=[0, 1, 2], names=["transcript_id", "gene_id", "gene_name"])
+    t2g_df["gene_name"] = t2g_df["gene_name"].fillna(t2g_df["gene_id"])
     t2g_df["gene_length"] = t2g_df["transcript_id"].map(
         lambda x: tx_records.get(x, {}).get("length"))
     t2g_df["gc_content"] = t2g_df["transcript_id"].map(
         lambda x: tx_records.get(x, {}).get("gc_content"))
 
-    return t2g_df.groupby(["gene_id", "gene_name"])[["gene_length", "gc_content"]].mean().reset_index()
+    return t2g_df.groupby(["gene_id", "gene_name"])[["gene_length", "gc_content"]].median().reset_index()
 
 
-def query_ensembl(dir: Path, index_dir: Path, overwrite: bool = False) -> pd.DataFrame:
+def query_ensembl(project_dir: Path, index_dir: Path, species: str, overwrite: bool = False) -> pd.DataFrame:
     """Retrieve and cache gene annotations (biotype, length, GC content).
 
     Biotype is read from the GTF file in index_dir. Length and GC content are
     computed directly from the kb-python cDNA FASTA, guaranteeing complete
     coverage for every gene in the kallisto index.
 
-    If a cached CSV already exists at <dir>/gene_data/gene_attributes.csv and
-    overwrite is False, the cached file is returned without re-reading.
+    Results are cached per species at <project_dir>/Notebooks/gene_info/<species>/gene_attributes.csv.
 
     Args:
-        dir: Base directory under which gene_data/ is created.
+        project_dir: Root project directory.
         index_dir: Path to the kb-python kallisto index directory containing
             ref.gtf, cdna.fasta, and t2g.txt.
+        species: Species identifier (e.g. "human", "mouse") used for cache path.
         overwrite: If True, re-reads even when the cache file exists.
 
     Returns:
         DataFrame with columns 'gene_id', 'gene_name', 'gene_length', 'gc_content',
         'is_lnc', 'is_pc', 'is_mito', and 'is_ribo'.
     """
-    dir = dir / "gene_data"
-    if not dir.exists():
-        dir.mkdir(parents=False)
-    path = dir / "gene_attributes.csv"
+    cache_dir = project_dir / "Notebooks" / "gene_info" / species
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / "gene_attributes.csv"
 
     if os.path.exists(path) and not overwrite:
         gene_info = pd.read_csv(path, index_col=[0])
@@ -314,34 +422,47 @@ def query_ensembl(dir: Path, index_dir: Path, overwrite: bool = False) -> pd.Dat
         type_result = _biotype_from_gtf(index_dir / "ref.gtf")
         fasta_result = _query_from_fasta(index_dir / "cdna.fasta", index_dir / "t2g.txt")
 
-        gene_info = pd.merge(fasta_result, type_result, on=['gene_name', 'gene_id'])
-        gene_info.drop_duplicates(subset=['gene_name', 'gene_id'], inplace=True)
+        gene_info = pd.merge(fasta_result, type_result.drop(columns='gene_name'),
+                             on='gene_id', how='left')
+        bool_cols = gene_info.select_dtypes(include='bool').columns
+        for col in type_result.columns.difference(['gene_id', 'gene_name']):
+            if col not in bool_cols:
+                continue
+            gene_info[col] = gene_info[col].fillna(False)
+        gene_info.drop_duplicates(subset='gene_id', inplace=True)
+
+        fasta_ids = set(fasta_result['gene_id'])
+        gtf_ids = set(type_result['gene_id'])
+        _warn_unmatched(fasta_ids, gtf_ids, "query_ensembl", "cDNA FASTA", "GTF")
+
         gene_info.to_csv(path)
 
     return gene_info
 
 
-def query_ensembl_combined(dir: Path, index_dir: Path, overwrite: bool = False) -> pd.DataFrame:
+def query_ensembl_combined(project_dir: Path, index_dir: Path, species: str, overwrite: bool = False) -> pd.DataFrame:
     """Retrieve and cache gene annotations for a combined human/mouse reference.
 
     Length and GC content are computed from the combined kb-python cDNA FASTA
     (which already contains HUMAN_/MOUSE_ prefixes). Biotype annotations are
     read from the combined ref.gtf, which also carries HUMAN_/MOUSE_ prefixes.
 
+    Results are cached per species at <project_dir>/Notebooks/gene_info/<species>/gene_attributes.csv.
+
     Args:
-        dir: Base directory under which gene_data/ is created.
+        project_dir: Root project directory.
         index_dir: Path to the combined kb-python kallisto index directory containing
             ref.gtf, cdna.fasta, and t2g.txt.
+        species: Species identifier (e.g. "human_mouse") used for cache path.
         overwrite: If True, re-reads even when the cache file exists.
 
     Returns:
         DataFrame with columns 'gene_id', 'gene_name', 'gene_length', 'gc_content',
         'is_lnc', 'is_pc', 'is_mito', and 'is_ribo'.
     """
-    gene_data_dir = dir / "gene_data"
-    if not gene_data_dir.exists():
-        gene_data_dir.mkdir(parents=False)
-    path = gene_data_dir / "gene_attributes.csv"
+    cache_dir = project_dir / "Notebooks" / "gene_info" / species
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / "gene_attributes.csv"
 
     if os.path.exists(path) and not overwrite:
         return pd.read_csv(path, index_col=[0])
@@ -349,10 +470,179 @@ def query_ensembl_combined(dir: Path, index_dir: Path, overwrite: bool = False) 
     fasta_result = _query_from_fasta(index_dir / "cdna.fasta", index_dir / "t2g.txt")
     type_result = _biotype_from_gtf(index_dir / "ref.gtf")
 
-    combined = pd.merge(fasta_result, type_result, on=['gene_name', 'gene_id'])
-    combined.drop_duplicates(subset=['gene_name', 'gene_id'], inplace=True)
+    combined = pd.merge(fasta_result, type_result.drop(columns='gene_name'),
+                        on='gene_id', how='left')
+    bool_cols = combined.select_dtypes(include='bool').columns
+    for col in type_result.columns.difference(['gene_id', 'gene_name']):
+        if col not in bool_cols:
+            continue
+        combined[col] = combined[col].fillna(False)
+    combined.drop_duplicates(subset='gene_id', inplace=True)
+
+    fasta_ids = set(fasta_result['gene_id'])
+    gtf_ids = set(type_result['gene_id'])
+    _warn_unmatched(fasta_ids, gtf_ids, "query_ensembl_combined", "cDNA FASTA", "GTF")
+
     combined.to_csv(path)
     return combined
+
+
+def compute_gene_metrics(
+    project_dir: Path,
+    index_dir: Path,
+    species: str,
+    overwrite: bool = False,
+) -> pd.DataFrame:
+    """Compute three pairs of gene length and GC content metrics and cache to CSV.
+
+    The three methods capture different biological definitions of a gene:
+      - Genomic span: distance from gene start to end (including introns).
+      - Median transcript: median spliced length and GC across all isoforms.
+      - Exon union: total bp in the merged non-redundant exon intervals.
+
+    GC content for genomic span and exon union is extracted from the genome
+    FASTA via pysam (0-based half-open coordinates). Median transcript GC
+    is derived from the cDNA FASTA.
+
+    Results are cached per species at <project_dir>/Notebooks/gene_info/<species>/gene_metrics_detailed.csv.
+
+    Args:
+        project_dir: Root project directory.
+        index_dir: Path to the kb-python kallisto index directory containing
+            ref.gtf, cdna.fasta, t2g.txt, and ref.fa.
+        species: Species identifier (e.g. "human", "mouse") used for cache path.
+        overwrite: If True, re-computes even when the cache file exists.
+
+    Returns:
+        DataFrame with columns 'gene_id', 'gene_name', 'length_genomic',
+        'gc_genomic', 'length_median_tx', 'gc_median_tx', 'length_exon_union',
+        and 'gc_exon_union'.
+    """
+    import pysam
+
+    cache_dir = project_dir / "Notebooks" / "gene_info" / species
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / "gene_metrics_detailed.csv"
+
+    if path.exists() and not overwrite:
+        return pd.read_csv(path, index_col=0)
+
+    gtf_path = index_dir / "ref.gtf"
+    cdna_fasta = index_dir / "cdna.fasta"
+    t2g = index_dir / "t2g.txt"
+    fasta_path = index_dir / "ref.fa"
+
+    _attr = re.compile(r'(\w+) "([^"]+)"')
+    gene_meta = {}   # (gene_id, gene_name) -> (chrom, start, end)
+    exon_lists = {}  # (gene_id, gene_name) -> [(chrom, start, end), ...]
+
+    with open(gtf_path, 'r') as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+            fields = line.rstrip('\n').split('\t')
+            feat = fields[2]
+            if feat not in ('gene', 'exon'):
+                continue
+            attrs = dict(_attr.findall(fields[8]))
+            gid = attrs.get('gene_id', '')
+            ver = attrs.get('gene_version', '')
+            gname = attrs.get('gene_name', gid)
+            if ver:
+                gid = f"{gid}.{ver}"
+            key = (gid, gname)
+            chrom = fields[0]
+            start = int(fields[3])
+            end = int(fields[4])
+            if feat == 'gene':
+                gene_meta[key] = (chrom, start, end)
+            else:
+                exon_lists.setdefault(key, []).append((chrom, start, end))
+
+    # Index genome FASTA if needed
+    fai = Path(str(fasta_path) + ".fai")
+    if not fai.exists():
+        print("Indexing genome FASTA (one-time)…")
+        pysam.faidx(str(fasta_path))
+    fasta = pysam.FastaFile(str(fasta_path))
+
+    def _gc(seq: str) -> float:
+        seq = seq.upper()
+        n = len(seq)
+        return (seq.count('G') + seq.count('C')) / n * 100 if n > 0 else 0.0
+
+    def _merge_intervals(intervals):
+        """Merge a list of (chrom, start, end) 1-based inclusive intervals."""
+        sorted_ivs = sorted(intervals, key=lambda x: x[1])
+        merged = [sorted_ivs[0]]
+        for chrom, s, e in sorted_ivs[1:]:
+            if s <= merged[-1][2] + 1:
+                merged[-1] = (merged[-1][0], merged[-1][1], max(merged[-1][2], e))
+            else:
+                merged.append((chrom, s, e))
+        return merged
+
+    genomic_rows = []
+    exon_union_rows = []
+
+    for key, (chrom, start, end) in gene_meta.items():
+        gid, gname = key
+        length = end - start + 1
+        try:
+            seq = fasta.fetch(chrom, start - 1, end)  # pysam: 0-based half-open
+            gc = _gc(seq)
+        except (KeyError, ValueError):
+            gc = float('nan')
+        genomic_rows.append({'gene_id': gid, 'gene_name': gname,
+                              'length_genomic': length, 'gc_genomic': gc})
+
+        exons = exon_lists.get(key, [(chrom, start, end)])
+        merged = _merge_intervals(exons)
+        union_len = sum(e - s + 1 for _, s, e in merged)
+        seqs = []
+        for chrom_e, s, e in merged:
+            try:
+                seqs.append(fasta.fetch(chrom_e, s - 1, e))
+            except (KeyError, ValueError):
+                pass
+        gc_union = _gc(''.join(seqs)) if seqs else float('nan')
+        exon_union_rows.append({'gene_id': gid, 'gene_name': gname,
+                                'length_exon_union': union_len, 'gc_exon_union': gc_union})
+
+    fasta.close()
+
+    # Median transcript length and GC from cDNA FASTA
+    tx_records = {}
+    for record in SeqIO.parse(cdna_fasta, "fasta"):
+        seq = str(record.seq).upper()
+        length = len(seq)
+        gc = (seq.count('G') + seq.count('C')) / length * 100 if length > 0 else 0.0
+        tx_records[record.id] = {"length": length, "gc_content": gc}
+
+    t2g_df = pd.read_csv(t2g, sep="\t", header=None,
+                         usecols=[0, 1, 2], names=["transcript_id", "gene_id", "gene_name"])
+    t2g_df["gene_name"] = t2g_df["gene_name"].fillna(t2g_df["gene_id"])
+    ens_mask = t2g_df["gene_name"].str.match(r'^ENS[A-Z]*G\d')
+    t2g_df.loc[ens_mask, "gene_name"] = t2g_df.loc[ens_mask, "gene_id"]
+    t2g_df["gene_length"] = t2g_df["transcript_id"].map(
+        lambda x: tx_records.get(x, {}).get("length"))
+    t2g_df["gc_content"] = t2g_df["transcript_id"].map(
+        lambda x: tx_records.get(x, {}).get("gc_content"))
+    median_tx = (
+        t2g_df.groupby(["gene_id", "gene_name"])[["gene_length", "gc_content"]]
+        .median()
+        .reset_index()
+        .rename(columns={"gene_length": "length_median_tx", "gc_content": "gc_median_tx"})
+    )
+
+    df_genomic = pd.DataFrame(genomic_rows)
+    df_exon = pd.DataFrame(exon_union_rows)
+
+    genomic_exon = df_genomic.drop(columns='gene_name').merge(
+        df_exon.drop(columns='gene_name'), on='gene_id')
+    result = median_tx.merge(genomic_exon, on='gene_id', how='left')
+    result.to_csv(path)
+    return result
 
 
 def add_cell_metrics(data: ad.AnnData, gene_info: pd.DataFrame) -> None:
@@ -366,11 +656,16 @@ def add_cell_metrics(data: ad.AnnData, gene_info: pd.DataFrame) -> None:
         gene_info: DataFrame from query_ensembl with 'gene_id', 'is_lnc', 'is_pc',
             'gene_length', and 'gc_content' columns.
     """
+    data_ids = set(data.var["gene_id"].tolist())
+    info_ids = set(gene_info["gene_id"].tolist())
+    _warn_unmatched(data_ids, info_ids, "add_cell_metrics", "adata", "gene_info")
+
     lnc_result = gene_info["gene_id"][gene_info['is_lnc']].tolist()
     pc_result = gene_info["gene_id"][gene_info['is_pc']].tolist()
     mito_result = gene_info["gene_id"][gene_info['is_mito']].tolist()
     ribo_result = gene_info["gene_id"][gene_info['is_ribo']].tolist()
     oxphos_result = gene_info["gene_id"][gene_info['is_oxphos']].tolist()
+    pseudo_result = gene_info["gene_id"][gene_info['is_pseudo']].tolist()
     gene_lengths = gene_info[['gene_id', 'gene_length']].drop_duplicates()
     gc_content = gene_info[['gene_id', 'gc_content']].drop_duplicates()
 
@@ -378,6 +673,7 @@ def add_cell_metrics(data: ad.AnnData, gene_info: pd.DataFrame) -> None:
     pc_genes = set(data.var["gene_id"].tolist()).intersection(set(pc_result))
     mito_genes = set(data.var["gene_id"].tolist()).intersection(set(mito_result))
     ribo_genes = set(data.var["gene_id"].tolist()).intersection(set(ribo_result))
+    pseudo_genes = set(data.var["gene_id"].tolist()).intersection(set(pseudo_result))
     oxphos_genes = set(data.var["gene_id"].tolist()).intersection(set(oxphos_result))
 
     data.var["is_lnc"] = np.full(len(data.var_names), False)
@@ -392,8 +688,12 @@ def add_cell_metrics(data: ad.AnnData, gene_info: pd.DataFrame) -> None:
     data.var["is_ribo"] = np.full(len(data.var_names), False)
     data.var.loc[data.var["gene_id"].isin(list(ribo_genes)), ["is_ribo"]] = True
 
+    data.var["is_pseudo"] = np.full(len(data.var_names), False)
+    data.var.loc[data.var["gene_id"].isin(list(pseudo_genes)), ["is_pseudo"]] = True
+
     data.var["is_oxphos"] = np.full(len(data.var_names), False)
     data.var.loc[data.var["gene_id"].isin(list(oxphos_genes)), ["is_oxphos"]] = True
+
     
     pc_counts = data[:, data.var['is_pc']].X.sum(axis=1)
     mito_counts = data[:, data.var['is_mito']].X.sum(axis=1)
@@ -537,7 +837,7 @@ def compare_genes(data_x: ad.AnnData, data_y: ad.AnnData, lim: float, comparison
     shared_data.fillna(0, inplace=True)
     shared_data = shared_data[(shared_data[f"{comparison_axis}_x"] <= lim) & (shared_data[f"{comparison_axis}_y"] <= lim)]
 
-    for col in ['is_lnc', 'is_mito', 'is_ribo', 'is_pc', 'is_oxphos']:
+    for col in ['is_lnc', 'is_mito', 'is_ribo', 'is_pc', 'is_oxphos', 'is_pseudo']:
         shared_data[col] = shared_data[col + "_x"] | shared_data[col + "_y"]
         shared_data.drop(col + "_x", axis=1, inplace=True)
         shared_data.drop(col + "_y", axis=1, inplace=True)

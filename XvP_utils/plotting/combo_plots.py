@@ -12,6 +12,7 @@ from matplotlib.colors import LogNorm, Normalize
 from upsetty import Upset
 from typing import Tuple
 from . import processing
+from .processing import _warn_unmatched, _load_orthologs, _normalize_gene_name
 
 
 def _violin_plots(ax_col: list[matplotlib.axes.Axes], data: ad.AnnData, groups: list[str]) -> None:
@@ -664,12 +665,12 @@ def compare_by_type(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], l
     fig, axs = plt.subplots(1, 4, figsize=(25, 5))
 
     for ax, df, pair in zip(axs, compare_dfs, comparisons):
-        cat_scatter_genes(ax, df[~(df['is_mito'] | df['is_ribo'] | df['is_lnc'])],
+        cat_scatter_genes(ax, df[~(df['is_mito'] | df['is_ribo'] | df['is_lnc'] | df['is_pseudo'])],
                           pair[0], pair[1], 'black',
                           label='unspecified non-coding', xlim=lim, ylim=lim)
-        for col, c, label in zip(['is_pc', 'is_mito', 'is_ribo', 'is_lnc'],
-                                  ['yellow', 'blue', 'red', 'green'],
-                                  ['protein coding', 'mtRNA', 'rRNA', 'lncRNA']):
+        for col, c, label in zip(['is_pc', 'is_pseudo', 'is_mito', 'is_ribo', 'is_lnc'],
+                                  ['yellow', 'cyan', 'blue', 'red', 'green'],
+                                  ['protein coding', 'pseudogene', 'mtRNA', 'rRNA', 'lncRNA']):
             cat_scatter_genes(ax, df[df[col]], pair[0], pair[1],
                               c, label=label, xlim=lim, ylim=lim)
 
@@ -747,11 +748,8 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
         label_enriched: If True, annotate every gene belonging to any selected term
             with its gene name, in addition to the top Cook's/log-ratio labels.
     """
-    def _norm(name: str) -> str:
-        for prefix in ("HUMAN_", "MOUSE_"):
-            if name.startswith(prefix):
-                return name[len(prefix):].upper()
-        return name.upper()
+    orthologs = _load_orthologs()
+    _norm = lambda name: _normalize_gene_name(name, orthologs)
 
     enr_df = pd.read_csv(enrichment_path, index_col=0)
     if gene_sets is not None:
@@ -767,6 +765,12 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
         per_term_genes[t].update(_norm(g) for g in row['Genes'].split(';'))
     selected_terms = list(per_term_genes.keys())
 
+    available = set()
+    for df in compare_dfs:
+        available.update(df['gene_name'].apply(_norm))
+    for term, gene_set in per_term_genes.items():
+        _warn_unmatched(gene_set, available, "compare_by_enrichment", f'"{term}"', "data")
+
     cmap = matplotlib.colormaps.get_cmap('tab10')
     colors = [cmap(i % 10) for i in range(len(selected_terms))]
 
@@ -775,6 +779,8 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
     fig, axs = plt.subplots(1, 4, figsize=(25, 5))
 
     for ax, df, pair in zip(axs, compare_dfs, comparisons):
+        x_label = pair[0].uns['title']
+        y_label = pair[1].uns['title']
         norm_names = df['gene_name'].apply(_norm)
         cat_scatter_genes(ax, df, pair[0], pair[1], 'lightgrey', xlim=lim, ylim=lim)
 
@@ -782,6 +788,13 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
             mask = norm_names.isin(per_term_genes[term])
             cat_scatter_genes(ax, df[mask], pair[0], pair[1],
                               color, label=term, xlim=lim, ylim=lim)
+            sub = df[mask]
+            n_above = (sub['percent_counts_y'] > sub['percent_counts_x']).sum()
+            n_below = (sub['percent_counts_x'] > sub['percent_counts_y']).sum()
+            n_total = len(sub)
+            print(f"  {x_label} vs {y_label} | {term}: "
+                  f"{n_below}/{n_total} toward {x_label}, "
+                  f"{n_above}/{n_total} toward {y_label}")
 
         show_correlation(ax, df)
         _label_genes(ax, df, n_cooks, n_log_ratio, min_pct)
@@ -798,7 +811,62 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
     plt.tight_layout()
     plt.show()
 
-def compare(datasets: list[ad.AnnData], 
+def compare_by_de(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim: float,
+                   de_results: pd.DataFrame, de_comparing: tuple[str, str],
+                   fdr_thresh: float = 0.05,
+                   n_cooks: int = 10, n_log_ratio: int = 10, min_pct: float = 0.1,
+                   label_de: bool = False) -> None:
+    orthologs = _load_orthologs()
+    _norm = lambda name: _normalize_gene_name(name, orthologs)
+
+    de_side1, de_side2 = de_comparing
+    sig = de_results[de_results['FDR'] < fdr_thresh].copy()
+    sig['_norm'] = sig['gene_name'].apply(_norm)
+
+    genes_side1 = set(sig.loc[sig['logFC'] < 0, '_norm'])
+    genes_side2 = set(sig.loc[sig['logFC'] > 0, '_norm'])
+
+    fig, axs = plt.subplots(1, 4, figsize=(25, 5))
+
+    for ax, df, pair in zip(axs, compare_dfs, comparisons):
+        x_label = pair[0].uns['title']
+        y_label = pair[1].uns['title']
+        norm_names = df['gene_name'].apply(_norm)
+
+        cat_scatter_genes(ax, df, pair[0], pair[1], 'lightgrey', xlim=lim, ylim=lim)
+
+        for gene_set, color, label in [
+            (genes_side1, '#1f77b4', f'Higher in {de_side1} (n={len(genes_side1)})'),
+            (genes_side2, '#d62728', f'Higher in {de_side2} (n={len(genes_side2)})'),
+        ]:
+            mask = norm_names.isin(gene_set)
+            cat_scatter_genes(ax, df[mask], pair[0], pair[1],
+                              color, label=label, xlim=lim, ylim=lim)
+            sub = df[mask]
+            n_above = (sub['percent_counts_y'] > sub['percent_counts_x']).sum()
+            n_below = (sub['percent_counts_x'] > sub['percent_counts_y']).sum()
+            n_total = len(sub)
+            print(f"  {x_label} vs {y_label} | {label}: "
+                  f"{n_below}/{n_total} toward {x_label}, "
+                  f"{n_above}/{n_total} toward {y_label}")
+
+        show_correlation(ax, df)
+        _label_genes(ax, df, n_cooks, n_log_ratio, min_pct)
+
+        if label_de:
+            all_de = genes_side1 | genes_side2
+            for idx in df[norm_names.isin(all_de)].index:
+                row = df.loc[idx]
+                ax.annotate(row['gene_name'],
+                            (row['percent_counts_x'], row['percent_counts_y']),
+                            fontsize=7, ha='left', va='bottom', clip_on=True)
+
+    axs[0].legend(fontsize=7)
+    plt.tight_layout()
+    plt.show()
+
+
+def compare(datasets: list[ad.AnnData],
             lim: float,
             comparison_axis: str = "percent_counts",
             n_cooks: int = 5, 

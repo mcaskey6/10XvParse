@@ -27,7 +27,7 @@ def scatter_reads(datasets: list[ad.AnnData], figsize: Tuple[float,float]=(20,5)
         ax.set_xlabel("UMI Counts")
         ax.set_xscale('log')
         ax.set_yscale('log', nonpositive='clip')
-        ax.set_title(data.uns['title'] + " Reads")
+        ax.set_title(data.uns['title'])
 
     axs[0].set_ylabel("Genes Detected")
     fig.colorbar(plot, label="Percent Nascent Counts")
@@ -48,7 +48,8 @@ def knee_plot(raw_datasets: list[ad.AnnData], cutoffs: list[int], transform: boo
         List of AnnData object filtered to cells at or above the specified cutoff and transformed if transform=True.
     """
 
-    fig, axs = plt.subplots(1, len(raw_datasets), figsize=figsize, sharey=True, sharex=True)
+    fig, axs = plt.subplots(1, len(raw_datasets), figsize=figsize, sharey=True, sharex=True, squeeze=False)
+    axs = axs.flatten()
 
     datasets = []
     for ax, raw_data, cutoff in zip(axs, raw_datasets, cutoffs):

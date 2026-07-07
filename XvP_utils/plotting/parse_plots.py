@@ -20,7 +20,7 @@ def plot_counts_by_well(ax: matplotlib.axes.Axes, data: ad.AnnData) -> None:
     ax.set_title('Total polyT and randO Counts by Well')
     ax.set_xlabel('Well')
     ax.set_ylabel('Total Counts')
-    ax.legend(title='Barcode Type')
+    ax.legend(["Parse 3'", "Parse Random Oligo"], title='Barcode Type')
 
 
 def plot_num_cells_by_well(ax: matplotlib.axes.Axes, data: ad.AnnData) -> None:

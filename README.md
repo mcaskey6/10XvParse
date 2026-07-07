@@ -81,7 +81,7 @@ Datasets (find [here](https://www.ncbi.nlm.nih.gov/sra?term=SRP484103)):
 ### Analysis 3
 From: [Comparative Analysis of Single-Cell RNA Sequencing Methods with and without Sample Multiplexing](https://www.mdpi.com/1422-0067/25/7/3828)
 
-Sample: *Homo sapiens* PBMCs from two healthy individuals
+Sample: Frozen *Homo sapiens* PBMCs from two healthy individuals
 
 Datasets (find [here](https://www.ncbi.nlm.nih.gov/sra?term=SRP469371)):
 - GSM7873659,61,63,65,67,69,71,73: Parse Evercode WT v2 H1 replicates 1–8
@@ -100,12 +100,13 @@ Datasets uploaded to EBI under PRJEB67544 (10x) and PRJEB67549 (Parse):
 
 ### Analysis 5
 From: [Comparative Analysis of Commercial Single-Cell RNA Sequencing Technologies](https://www.biorxiv.org/content/10.1101/2024.06.18.599579v1.full#sec-15)
+Now: [A comprehensive analysis framework for evaluating commercial single-cell RNA sequencing technologies] https://academic.oup.com/nar/article/53/2/gkae1186/7924191#501285411
 
 Sample: Frozen *Homo sapiens* PBMCs
 
-Datasets (find [here](https://www.ncbi.nlm.nih.gov/sra?term=SRP484103)):
+Datasets (find [here](https://www.ncbi.nlm.nih.gov/sra?term=SRP505235)):
 - SRR28867558: Parse Evercode WT v2
-- SRR28867563 and SRR28867562: 10x Next Gem v3, technical replicates 1 and 2
+- SRR28867563 and SRR28867562: 10x Next Gem v3.1, technical replicates 1 and 2
 
 ### Analysis 6
 From: [Comparison of high-throughput single-cell RNA-seq methods for ex vivo drug screening](https://academic.oup.com/nargab/article/6/1/lqae001/7591100?login=true#460158720)
@@ -121,13 +122,28 @@ Datasets (find [here](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE2296
 From: Comparative analysis of multiplex single-cell mRNA sequencing of resting and activated 
 PBMCs using droplet-based and split-pool methods (Yet to be published)
 
-Sample: frozen *Homo sapiens* PBMCs
+Sample: Frozen *Homo sapiens* PBMCs
 
 Datasets:
 10x: AZ13332/AZ_cDNA_S1_L002; 10X Chromium v4
 10x_hashtags: LMO/RPI7_S0_L001; 10X Multi-Seq
 parse: AZ12601/AZ_PS_5k_S5_L002 and AZ12601/AZ_PS_10k_S6_L002; Parse Evercode mini v3
 
+
+## Paper Figure Labels
+
+The comparison figures in `Notebooks/Comparisons/` use the following experiment labels, ordered by species/tissue. Labels are colored by tissue type in the figures.
+
+| Paper Label | Repository | Sample | Species |
+|---|---|---|---|
+| Exp 1 | Analysis_6 | Cancer cell perturbation (Reh) | Human |
+| Exp 2a | Analysis_3 (H1) | Frozen PBMC, Donor 1 | Human |
+| Exp 2b | Analysis_3 (H2) | Frozen PBMC, Donor 2 | Human |
+| Exp 3 | Analysis_5 | Frozen PBMC | Human |
+| Exp 4 | Analysis_7 | Frozen PBMC | Human |
+| Exp 5a | Analysis_2 (standard) | Thymocytes | Mouse |
+| Exp 5b | Analysis_2 (mini) | Thymocytes | Mouse |
+| Exp 6 | Analysis_4 | K562/mESC barnyard | Human/Mouse |
 
 ## Adding a New Dataset
 
