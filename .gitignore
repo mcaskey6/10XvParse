@@ -27,3 +27,5 @@ Configs/10x_info/
 *.DS_Store
 *.egg-info/
 *.png
+**/Notebooks/barnyard_comparison/10x_data/**
+**/Notebooks/barnyard_comparison/parse_data/**

@@ -361,18 +361,24 @@ def annotate_gene_set(gene_info: pd.DataFrame, csv_path: Path,
 
 
 def _query_from_fasta(cdna_fasta: Path, t2g: Path) -> pd.DataFrame:
-    """Compute per-gene transcript length and GC content from a kb-python cDNA FASTA.
+    """Compute per-gene median transcript length and GC content from a kb-python cDNA FASTA.
 
-    Averages transcript length and GC content across all isoforms per gene.
-    This is more complete and accurate than querying Ensembl because every gene
-    present in the kallisto index is guaranteed to have an entry.
+    Parses every transcript in the cDNA FASTA, maps transcripts to genes via the
+    t2g file, and takes the median spliced length and GC content across all
+    isoforms of each gene. This is more complete and accurate than querying
+    Ensembl because every gene present in the kallisto index is guaranteed to
+    have an entry.
+
+    Gene names that are themselves Ensembl gene IDs (e.g. unnamed genes) are
+    normalised to the gene_id so that the (gene_id, gene_name) grouping is stable.
 
     Args:
         cdna_fasta: Path to the kb-python cdna.fasta file used to build the kallisto index.
         t2g: Path to the transcript-to-gene mapping file (t2g.txt).
 
     Returns:
-        DataFrame with columns 'gene_id', 'gene_name', 'gene_length', and 'gc_content'.
+        DataFrame with columns 'gene_id', 'gene_name', 'gene_length', and 'gc_content'
+        (one row per gene).
     """
     tx_records = {}
     for record in SeqIO.parse(cdna_fasta, "fasta"):
@@ -384,6 +390,8 @@ def _query_from_fasta(cdna_fasta: Path, t2g: Path) -> pd.DataFrame:
     t2g_df = pd.read_csv(t2g, sep="\t", header=None,
                          usecols=[0, 1, 2], names=["transcript_id", "gene_id", "gene_name"])
     t2g_df["gene_name"] = t2g_df["gene_name"].fillna(t2g_df["gene_id"])
+    ens_mask = t2g_df["gene_name"].str.match(r'^ENS[A-Z]*G\d')
+    t2g_df.loc[ens_mask, "gene_name"] = t2g_df.loc[ens_mask, "gene_id"]
     t2g_df["gene_length"] = t2g_df["transcript_id"].map(
         lambda x: tx_records.get(x, {}).get("length"))
     t2g_df["gc_content"] = t2g_df["transcript_id"].map(
@@ -612,28 +620,8 @@ def compute_gene_metrics(
     fasta.close()
 
     # Median transcript length and GC from cDNA FASTA
-    tx_records = {}
-    for record in SeqIO.parse(cdna_fasta, "fasta"):
-        seq = str(record.seq).upper()
-        length = len(seq)
-        gc = (seq.count('G') + seq.count('C')) / length * 100 if length > 0 else 0.0
-        tx_records[record.id] = {"length": length, "gc_content": gc}
-
-    t2g_df = pd.read_csv(t2g, sep="\t", header=None,
-                         usecols=[0, 1, 2], names=["transcript_id", "gene_id", "gene_name"])
-    t2g_df["gene_name"] = t2g_df["gene_name"].fillna(t2g_df["gene_id"])
-    ens_mask = t2g_df["gene_name"].str.match(r'^ENS[A-Z]*G\d')
-    t2g_df.loc[ens_mask, "gene_name"] = t2g_df.loc[ens_mask, "gene_id"]
-    t2g_df["gene_length"] = t2g_df["transcript_id"].map(
-        lambda x: tx_records.get(x, {}).get("length"))
-    t2g_df["gc_content"] = t2g_df["transcript_id"].map(
-        lambda x: tx_records.get(x, {}).get("gc_content"))
-    median_tx = (
-        t2g_df.groupby(["gene_id", "gene_name"])[["gene_length", "gc_content"]]
-        .median()
-        .reset_index()
-        .rename(columns={"gene_length": "length_median_tx", "gc_content": "gc_median_tx"})
-    )
+    median_tx = _query_from_fasta(cdna_fasta, t2g).rename(
+        columns={"gene_length": "length_median_tx", "gc_content": "gc_median_tx"})
 
     df_genomic = pd.DataFrame(genomic_rows)
     df_exon = pd.DataFrame(exon_union_rows)

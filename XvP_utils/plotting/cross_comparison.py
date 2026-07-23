@@ -109,7 +109,8 @@ def volcano_plot(results: pd.DataFrame, comparing: dict[str, str], fdr_thresh: f
                  gene_sets: list[str] | None = None,
                  terms: list[str] | None = None,
                  highlight_genes: list[str] | None = None,
-                 highlight_label: str = "outside DE"):
+                 highlight_label: str = "outside DE",
+                 annotate: bool = True):
     side1, side2 = comparing.values()
 
     sig2 = (results["FDR"] < fdr_thresh) & (results["logFC"] > 0)
@@ -129,11 +130,12 @@ def volcano_plot(results: pd.DataFrame, comparing: dict[str, str], fdr_thresh: f
 
     for sub in [results[sig1].nsmallest(label_num, "FDR"),
                 results[sig2].nsmallest(label_num, "FDR")]:
-        for _, row in sub.iterrows():
-            ax.annotate(row["gene_name"],
-                        (row["logFC"], -np.log10(row["FDR"])),
-                        fontsize=6, ha="center",
-                        xytext=(0, 4), textcoords="offset points")
+        if annotate:
+            for _, row in sub.iterrows():
+                ax.annotate(row["gene_name"],
+                            (row["logFC"], -np.log10(row["FDR"])),
+                            fontsize=6, ha="center",
+                            xytext=(0, 4), textcoords="offset points")
 
     legend_handles = [
         mpatches.Patch(color="#d62728", label=f"Higher in {side2} (n={n_sig2})"),
@@ -163,12 +165,25 @@ def volcano_plot(results: pd.DataFrame, comparing: dict[str, str], fdr_thresh: f
         for term, gene_set in per_term_genes.items():
             _warn_unmatched(gene_set, available, "volcano_plot", f'"{term}"', "results")
 
+        def _volcano_fisher(mask: pd.Series) -> float:
+            sub  = results[mask]
+            rest = results[~mask]
+            sa, sb = (sub["logFC"]  > 0).sum(), (sub["logFC"]  < 0).sum()
+            ra, rb = (rest["logFC"] > 0).sum(), (rest["logFC"] < 0).sum()
+            if sa + sb == 0:
+                return 1.0
+            _, p = fisher_exact([[sa, sb], [ra, rb]])
+            return p
+
+        def _fmt_p(p: float) -> str:
+            return f"p={p:.2e}"
+
         def _frac(n, denom): return f"{n}/{denom} ({100 * n / denom:.1f}%)" if denom else f"{n}/0"
 
-        def _summarize(label, mask):
+        def _summarize(label, mask, p):
             m = mask.values if hasattr(mask, "values") else mask
             n = int(m.sum())
-            print(f"  {label} — {n} annotated genes labeled on plot:")
+            print(f"  {label} — {n} annotated genes labeled on plot ({_fmt_p(p)}):")
             print(f"     logFC > 0, higher in {side2}: {_frac(int((m & (results['logFC'] > 0)).sum()), n)}")
             print(f"     logFC < 0, higher in {side1}: {_frac(int((m & (results['logFC'] < 0)).sum()), n)}")
             print(f"     significant (FDR < {fdr_thresh}) higher in {side2}: {_frac(int((m & sig2).sum()), n)}")
@@ -179,19 +194,21 @@ def volcano_plot(results: pd.DataFrame, comparing: dict[str, str], fdr_thresh: f
         for i, (term, gene_set) in enumerate(per_term_genes.items()):
             mask = norm_names.isin(gene_set)
             union_mask |= mask
+            p = _volcano_fisher(mask)
             sub = results[mask]
             ax.scatter(sub["logFC"], nlp[mask], color="black", s=18, alpha=0.9, zorder=3)
             for _, row in sub.iterrows():
-                ax.annotate(row["gene_name"],
-                            (row["logFC"], -np.log10(row["FDR"])),
-                            fontsize=6, ha="left", va="bottom",
-                            xytext=(2, 2), textcoords="offset points",
-                            clip_on=True)
-            legend_handles.append(mpatches.Patch(color="black", label=term))
-            _summarize(term, mask)
+                if annotate:
+                    ax.annotate(row["gene_name"],
+                                (row["logFC"], -np.log10(row["FDR"])),
+                                fontsize=6, ha="left", va="bottom",
+                                xytext=(2, 2), textcoords="offset points",
+                                clip_on=True)
+            legend_handles.append(mpatches.Patch(color="black", label=f"{term} ({_fmt_p(p)})"))
+            _summarize(term, mask, p)
 
         if len(per_term_genes) > 1:
-            _summarize("ALL terms (union)", union_mask)
+            _summarize("ALL terms (union)", union_mask, _volcano_fisher(union_mask))
 
     if highlight_genes is not None:
         orthologs = _load_orthologs()
@@ -427,24 +444,34 @@ def enrichment_analysis(combined: pd.DataFrame, results: pd.DataFrame, comparing
 
 
 def plot_goseq_enrichment_bar(comparison_dir: str | Path, comparing: dict[str, str],
-                              pcol: str = "padj_wal", fdr_thresh: float = 0.05, max_terms: int = 20):
+                              pcol: str = "padj_wal", fdr_thresh: float = 0.05, max_terms: int = 20,
+                              robust_only: bool = True):
     """Render goseq GC-corrected GO enrichment through the enrichr bar-plot style.
 
     Reads ``{side}_outliers/goseq_gc_corrected.csv`` (written by goseq.ipynb) for each side
     of the comparison, reshapes goseq's ``category`` (``db::term``) into the Gene_set / Term /
     Adjusted P-value columns ``_plot_term_enrichment_bar`` expects, then draws the same plot.
 
+    For the corrected view (``pcol="padj_wal"``), ``robust_only`` (default) keeps only
+    **GC-robust** terms — those also significant *before* correction (padj_naive < fdr_thresh).
+    Without it the plot would also show terms that only crossed the threshold *after* GC
+    reweighting (typically huge generic categories like "Nucleus"), which are correction
+    artifacts, not enrichment that survived correction.
+
     Args:
         comparison_dir: Folder holding the ``{side}_outliers`` subdirs (e.g. .../PolyTvRandO).
         comparing: dict mapping side key -> display label; keys name the outlier folders.
         pcol: goseq p-value column to plot — "padj_wal" (GC-corrected, default) or "padj_naive".
         fdr_thresh, max_terms: passed through to the bar plot.
+        robust_only: for the corrected view, require naive significance too (GC-robust).
     """
     comparison_dir = Path(comparison_dir)
     side1_key, side2_key = list(comparing)
 
     def _load(side):
         df = pd.read_csv(comparison_dir / f"{side}_outliers" / "goseq_gc_corrected.csv")
+        if robust_only and pcol == "padj_wal":
+            df = df[df["padj_naive"] < fdr_thresh]   # keep only terms also enriched pre-correction
         parts = df["category"].str.split("::", n=1)
         df["Gene_set"] = parts.str[0]
         df["Term"] = parts.str[1]

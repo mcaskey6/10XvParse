@@ -7,12 +7,87 @@ import matplotlib.collections
 import numpy as np
 import scanpy as sc
 import pandas as pd
-from scipy.stats import spearmanr, pearsonr
+import warnings
+import urllib.request
+import urllib.parse
+import gseapy as gp
+from scipy.stats import spearmanr, pearsonr, fisher_exact
 from matplotlib.colors import LogNorm, Normalize
 from upsetty import Upset
 from typing import Tuple
 from . import processing
 from .processing import _warn_unmatched, _load_orthologs, _normalize_gene_name
+
+_GO_LIBRARY_CACHE: dict[str, dict[str, list[str]]] = {}
+
+_DEFAULT_GO_LIBRARIES = [
+    'GO_Biological_Process_2026',
+    'GO_Molecular_Function_2026',
+    'GO_Cellular_Component_2026',
+]
+
+def _fetch_enrichr_library(library_name: str) -> dict[str, list[str]]:
+    url = (f"https://maayanlab.cloud/Enrichr/geneSetLibrary"
+           f"?mode=text&libraryName={urllib.parse.quote(library_name)}")
+    with urllib.request.urlopen(url, timeout=60) as resp:
+        raw = resp.read().decode("utf-8")
+    lib: dict[str, list[str]] = {}
+    for line in raw.strip().split("\n"):
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            lib[parts[0]] = [g for g in parts[2:] if g]
+    return lib
+
+def _resolve_go_terms(terms: list[str],
+                      library_names: list[str]) -> dict[str, list[str]]:
+    libs = []
+    for name in library_names:
+        if name not in _GO_LIBRARY_CACHE:
+            _GO_LIBRARY_CACHE[name] = _fetch_enrichr_library(name)
+        libs.append((name, _GO_LIBRARY_CACHE[name]))
+
+    result: dict[str, list[str]] = {}
+    for term in terms:
+        term_lower = term.lower()
+        matched_key = None
+        matched_genes = None
+        for lib_name, lib in libs:
+            if term in lib:
+                matched_key = term
+                matched_genes = lib[term]
+                break
+            for key in lib:
+                if term_lower in key.lower():
+                    matched_key = key
+                    matched_genes = lib[key]
+                    break
+            if matched_key is not None:
+                break
+        if matched_key is not None:
+            result[matched_key] = matched_genes
+        else:
+            warnings.warn(f"compare_by_go: '{term}' not found in any of {library_names}")
+    return result
+
+
+def _diagonal_fisher(df: pd.DataFrame, mask: pd.Series,
+                     background_mask: pd.Series | None = None) -> float:
+    if background_mask is None:
+        background_mask = pd.Series(True, index=df.index)
+    sub  = df[mask]
+    rest = df[background_mask & ~mask]
+    sa = (sub['percent_counts_y']  > sub['percent_counts_x']).sum()
+    sb = (sub['percent_counts_x']  > sub['percent_counts_y']).sum()
+    ra = (rest['percent_counts_y'] > rest['percent_counts_x']).sum()
+    rb = (rest['percent_counts_x'] > rest['percent_counts_y']).sum()
+    if sa + sb == 0:
+        return 1.0
+    _, p = fisher_exact([[sa, sb], [ra, rb]])
+    return p
+
+
+def _fmt_p(p: float) -> str:
+    return f"p={p:.2e}"
 
 
 def _violin_plots(ax_col: list[matplotlib.axes.Axes], data: ad.AnnData, groups: list[str]) -> None:
@@ -618,7 +693,7 @@ def compare_by_length(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
     for df in compare_dfs:
         df['gene_length'] = df['gene_length'] + 1
         c_values.extend(df['gene_length'].tolist())
-    norm = LogNorm(1, max(c_values))
+    norm = LogNorm(min(c_values), max(c_values))
 
     comparison_plotter(compare_dfs, comparisons, norm, lim, 'gene_length', 'Gene Length',
                        n_cooks, n_log_ratio, min_pct)
@@ -640,7 +715,7 @@ def compare_by_gc(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim
     c_values = []
     for df in compare_dfs:
         c_values.extend(df['gc_content'].tolist())
-    norm = Normalize(0, max(c_values))
+    norm = Normalize(min(c_values), max(c_values))
 
     comparison_plotter(compare_dfs, comparisons, norm, lim, 'gc_content', 'Percent GC Content',
                        n_cooks, n_log_ratio, min_pct)
@@ -750,6 +825,8 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
     """
     orthologs = _load_orthologs()
     _norm = lambda name: _normalize_gene_name(name, orthologs)
+    # background = genes whose normalized name is a known human HGNC symbol
+    human_hgnc = set(orthologs.values())
 
     enr_df = pd.read_csv(enrichment_path, index_col=0)
     if gene_sets is not None:
@@ -782,21 +859,24 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
         x_label = pair[0].uns['title']
         y_label = pair[1].uns['title']
         norm_names = df['gene_name'].apply(_norm)
+        background_mask = norm_names.isin(human_hgnc)
         cat_scatter_genes(ax, df, pair[0], pair[1], 'lightgrey', xlim=lim, ylim=lim)
 
         for term, color in zip(selected_terms, colors):
             mask = norm_names.isin(per_term_genes[term])
+            p = _diagonal_fisher(df, mask, background_mask)
+            label = f"{term} ({_fmt_p(p)})"
             cat_scatter_genes(ax, df[mask], pair[0], pair[1],
-                              color, label=term, xlim=lim, ylim=lim)
+                              color, label=label, xlim=lim, ylim=lim)
             sub = df[mask]
             n_above = (sub['percent_counts_y'] > sub['percent_counts_x']).sum()
             n_below = (sub['percent_counts_x'] > sub['percent_counts_y']).sum()
             n_total = len(sub)
             print(f"  {x_label} vs {y_label} | {term}: "
                   f"{n_below}/{n_total} toward {x_label}, "
-                  f"{n_above}/{n_total} toward {y_label}")
+                  f"{n_above}/{n_total} toward {y_label}, {_fmt_p(p)}")
 
-        show_correlation(ax, df)
+        ax.plot([0, 100], [0, 100], color='black', linestyle='--', linewidth=1.5)
         _label_genes(ax, df, n_cooks, n_log_ratio, min_pct)
 
         if label_enriched:
@@ -806,7 +886,7 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
                             (row['percent_counts_x'], row['percent_counts_y']),
                             fontsize=7, ha='left', va='bottom', clip_on=True)
 
-    axs[0].legend()
+        ax.legend(fontsize=7)
 
     plt.tight_layout()
     plt.show()
@@ -822,6 +902,8 @@ def compare_by_de(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim
     de_side1, de_side2 = de_comparing
     sig = de_results[de_results['FDR'] < fdr_thresh].copy()
     sig['_norm'] = sig['gene_name'].apply(_norm)
+    # background = all genes tested by edgeR (not just significant ones)
+    tested_genes = set(de_results['gene_name'].apply(_norm))
 
     genes_side1 = set(sig.loc[sig['logFC'] < 0, '_norm'])
     genes_side2 = set(sig.loc[sig['logFC'] > 0, '_norm'])
@@ -832,25 +914,28 @@ def compare_by_de(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim
         x_label = pair[0].uns['title']
         y_label = pair[1].uns['title']
         norm_names = df['gene_name'].apply(_norm)
+        background_mask = norm_names.isin(tested_genes)
 
         cat_scatter_genes(ax, df, pair[0], pair[1], 'lightgrey', xlim=lim, ylim=lim)
 
-        for gene_set, color, label in [
+        for gene_set, color, base_label in [
             (genes_side1, '#1f77b4', f'Higher in {de_side1} (n={len(genes_side1)})'),
             (genes_side2, '#d62728', f'Higher in {de_side2} (n={len(genes_side2)})'),
         ]:
             mask = norm_names.isin(gene_set)
+            p = _diagonal_fisher(df, mask, background_mask)
+            label = f"{base_label}, {_fmt_p(p)}"
             cat_scatter_genes(ax, df[mask], pair[0], pair[1],
                               color, label=label, xlim=lim, ylim=lim)
             sub = df[mask]
             n_above = (sub['percent_counts_y'] > sub['percent_counts_x']).sum()
             n_below = (sub['percent_counts_x'] > sub['percent_counts_y']).sum()
             n_total = len(sub)
-            print(f"  {x_label} vs {y_label} | {label}: "
+            print(f"  {x_label} vs {y_label} | {base_label}: "
                   f"{n_below}/{n_total} toward {x_label}, "
-                  f"{n_above}/{n_total} toward {y_label}")
+                  f"{n_above}/{n_total} toward {y_label}, {_fmt_p(p)}")
 
-        show_correlation(ax, df)
+        ax.plot([0, 100], [0, 100], color='black', linestyle='--', linewidth=1.5)
         _label_genes(ax, df, n_cooks, n_log_ratio, min_pct)
 
         if label_de:
@@ -861,7 +946,76 @@ def compare_by_de(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim
                             (row['percent_counts_x'], row['percent_counts_y']),
                             fontsize=7, ha='left', va='bottom', clip_on=True)
 
-    axs[0].legend(fontsize=7)
+        ax.legend(fontsize=7)
+    plt.tight_layout()
+    plt.show()
+
+
+def compare_by_go(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim: float,
+                   terms: list[str],
+                   go_library: str | list[str] | None = None,
+                   n_cooks: int = 10, n_log_ratio: int = 10, min_pct: float = 0.1,
+                   label_genes: bool = False) -> None:
+    orthologs = _load_orthologs()
+    _norm = lambda name: _normalize_gene_name(name, orthologs)
+
+    library_names = (
+        _DEFAULT_GO_LIBRARIES if go_library is None
+        else ([go_library] if isinstance(go_library, str) else go_library)
+    )
+    per_term_genes: dict[str, list[str]] = _resolve_go_terms(terms, library_names)
+    if not per_term_genes:
+        raise ValueError("No GO terms matched — check term names or GO IDs.")
+
+    all_term_genes = set().union(*[set(g) for g in per_term_genes.values()])
+
+    # background = all genes present in any loaded GO library (the annotatable universe)
+    bg_genes: set[str] = set()
+    for lib in _GO_LIBRARY_CACHE.values():
+        for gene_list in lib.values():
+            bg_genes.update(gene_list)
+
+    cmap = matplotlib.colormaps.get_cmap('tab10')
+    colors = [cmap(i % 10) for i in range(len(per_term_genes))]
+
+    fig, axs = plt.subplots(1, 4, figsize=(25, 5))
+
+    for ax, df, pair in zip(axs, compare_dfs, comparisons):
+        x_label = pair[0].uns['title']
+        y_label = pair[1].uns['title']
+        norm_names = df['gene_name'].apply(_norm)
+        background_mask = norm_names.isin(bg_genes)
+
+        cat_scatter_genes(ax, df, pair[0], pair[1], 'lightgrey', xlim=lim, ylim=lim)
+
+        for (term, gene_list), color in zip(per_term_genes.items(), colors):
+            gene_set = {_norm(g) for g in gene_list}
+            mask = norm_names.isin(gene_set)
+            short_label = term.split(' (GO:')[0]
+            p = _diagonal_fisher(df, mask, background_mask)
+            label = f"{short_label} ({_fmt_p(p)})"
+            cat_scatter_genes(ax, df[mask], pair[0], pair[1],
+                              color, label=label, xlim=lim, ylim=lim)
+            sub = df[mask]
+            n_above = (sub['percent_counts_y'] > sub['percent_counts_x']).sum()
+            n_below = (sub['percent_counts_x'] > sub['percent_counts_y']).sum()
+            n_total = len(sub)
+            print(f"  {x_label} vs {y_label} | {short_label}: "
+                  f"{n_below}/{n_total} toward {x_label}, "
+                  f"{n_above}/{n_total} toward {y_label}, {_fmt_p(p)}")
+
+        ax.plot([0, 100], [0, 100], color='black', linestyle='--', linewidth=1.5)
+        _label_genes(ax, df, n_cooks, n_log_ratio, min_pct)
+
+        if label_genes:
+            all_norm = {_norm(g) for g in all_term_genes}
+            for idx in df[norm_names.isin(all_norm)].index:
+                row = df.loc[idx]
+                ax.annotate(row['gene_name'],
+                            (row['percent_counts_x'], row['percent_counts_y']),
+                            fontsize=7, ha='left', va='bottom', clip_on=True)
+
+        ax.legend(fontsize=7)
     plt.tight_layout()
     plt.show()
 
