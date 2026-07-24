@@ -83,6 +83,6 @@ if __name__ == "__main__":
     os.makedirs(settings.root_dir / "Logs", exist_ok=True)
     logger = setup_logger(settings.root_dir / "Logs" / "analysis2.txt")
 
-    #load_all(settings, config_file, logger)
+    load_all(settings, config_file, logger)
     subsample_all(settings, config_file, logger)
-    # genebody_plots(settings, config_file, logger)
+    genebody_plots(settings, config_file, logger)

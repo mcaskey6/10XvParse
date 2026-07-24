@@ -29,9 +29,11 @@ For each Parse assay the pipeline automatically generates the following files in
 |------|----------|
 | `r1_R.txt` | Round 1 randO primer barcode sequences for the selected wells (used by splitcode) |
 | `r1_T.txt` | Round 1 polyT primer barcode sequences for the selected wells (used by splitcode) |
-| `onlist.txt` | Per-round barcode whitelist for kb-python error correction |
+| `onlist.txt` | Per-round barcode whitelist for kb-python error correction, including the sublibrary barcode |
 | `replace.txt` | Maps randO bc1 sequences to their polyT counterparts for kb-python |
 | `bcs_to_wells.txt` | Mapping from all bc1 sequences to well positions (used in analysis notebooks) |
+| `lib_bc.txt` | Sublibrary barcode whitelist (used by STARsolo) |
+| `sublibraries.txt` | Which sublibrary barcode was assigned to which sublibrary name |
 
 The source of truth for all barcode sequences is `Configs/parse_info/` — `kits_info.txt` lists the barcode files for each kit version, and `barcodes/*.csv` contains the sequences. The pipeline also writes `config_RT_parse.txt`, `parse_keep.txt`, and `randOpolyT_keep.txt` into the same subdirectory at run time.
 
@@ -173,12 +175,17 @@ name: Analysis_N
 
 species: human  # or "mouse" / "human_mouse"; determines which Configs/indexes/ file is used
 
-# SRA or ERA accession numbers, grouped by assay type
+# SRA or ERA accession numbers, grouped by assay type. Parse assays must additionally
+# group their accessions by sublibrary (see below).
 SRA:
   10x:
     - SRR_XXXXXXX
   parse:
-    - SRR_XXXXXXX
+    sub1:
+      - SRR_XXXXXXX
+      - SRR_XXXXXXX   # a second run of the same sublibrary
+    sub2:
+      - SRR_XXXXXXX
 
 # R1/R2 file suffixes produced by fasterq-dump. This varies across datasets depending upon
 # whether or not Illumina sample indices were indexed and in what order they were saved to SRA.
@@ -204,6 +211,17 @@ wells:
 For Parse assays, the `tech` value must be a kit name of the form `<kit>_v<chem>` (e.g. `WT_v2`, `WT_mini_v3`). The pipeline looks this up in `Configs/parse_info/kits_info.txt` to obtain the kb-python technology x-string and the correct barcode files, then auto-generates all required splitcode/kb-python config files before running.
 
 Use `ERA` instead of `SRA` for European Nucleotide Archive accessions.
+
+### Parse sublibraries
+
+A Parse sublibrary is distinguished by its sequencing index, not by the combinatorial barcodes themselves, so the same bc1/bc2/bc3 combination in two sublibraries belongs to two different cells. Sublibraries therefore cannot simply be concatenated. Group each Parse assay's accessions under a sublibrary name, as shown above; `splitcode --remultiplex --bclen=4` then prepends a distinct 4 bp sequence to read 2 of each sublibrary, and that sequence is carried downstream as a fourth cell barcode. Accessions listed under the same name are runs of one sublibrary and share a barcode.
+
+Two consequences worth knowing:
+
+- Barcodes are assigned in the order sublibrary names first appear in the YAML, so **reordering them invalidates already-processed data**. The assignment for a given run is recorded in `Configs/Analysis_N/<assay>/sublibraries.txt`.
+- For assays with no accessions (pre-downloaded local files in `FASTA/Dumped/`), **each `Lib{i}` file pair is treated as its own sublibrary**. Files belonging to the same sublibrary must be concatenated before the pipeline runs.
+
+Parse cell barcodes in the resulting H5ADs are consequently 4 bp longer, with the sublibrary barcode leading. bc1 remains the trailing 8 bp, so notebook logic keyed on the end of the barcode is unaffected.
 
 ### 3. Write a script
 

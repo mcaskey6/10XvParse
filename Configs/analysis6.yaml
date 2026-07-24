@@ -6,8 +6,10 @@ SRA:
  10x_hashtags:
  - SRR24154340
  parse:
- - SRR24154341
- - SRR24154342
+  sub1:
+  - SRR24154341
+  sub2:
+  - SRR24154342
 
 # The suffix for the R1 and R2 FASTA files dumped from fasterq-dump. For some reason these change across datasets
 read_num:

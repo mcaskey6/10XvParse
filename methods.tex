@@ -52,10 +52,16 @@ SRA runs were downloaded with \texttt{prefetch} and converted to FASTQ with
 \texttt{fasterq-dump} (\texttt{-{}-split-files -{}-skip-technical}; SRA-Tools
 v3.0.3~\cite{leinonen2011sra}) and compressed with \texttt{pigz}. ENA runs were
 streamed directly from the ENA FTP server as gzipped FASTQ. For assays distributed as
-multiple sublibraries, all sublibraries belonging to a single assay were concatenated
+multiple sublibraries, all sublibraries belonging to a single assay were combined
 into one paired-end FASTQ with \texttt{splitcode -{}-remultiplex} (splitcode
 v0.30.0~\cite{sullivan2024splitcode}), preserving the original
-read-1/read-2 structure.
+read-1/read-2 structure. Because a Parse sublibrary is resolved by its sequencing
+index rather than by the combinatorial barcodes themselves, identical round-1/2/3
+barcode combinations occurring in different sublibraries label different cells. Parse
+sublibraries were therefore combined with \texttt{-{}-bclen=4}, which prepends a
+distinct 4\,bp sequence to read~2 of every sublibrary; runs originating from the same
+sublibrary were assigned the same sequence. This synthetic barcode was carried through
+the remainder of the pipeline as a fourth cell barcode.
 
 \subsection{Reference genomes and indices}
 
@@ -86,7 +92,10 @@ be reconciled during quantification.
 Barcode whitelists and the kallisto technology string for each kit/chemistry were
 generated programmatically from the Parse barcode reference
 (\texttt{Configs/parse\_info/}), keyed on the kit name (e.g.\ \texttt{WT\_v2},
-\texttt{WT\_mini\_v3}) and, where applicable, the subset of sample wells used. Reads
+\texttt{WT\_mini\_v3}) and, where applicable, the subset of sample wells used. All
+read-2 barcode and UMI coordinates were offset by 4\,bp to account for the sublibrary
+barcode prepended during library assembly, and the sublibrary barcode itself was
+registered as an additional cell barcode occupying the first 4\,bp of read~2. Reads
 were then processed with \texttt{splitcode} (v0.30.0) in two steps: (i)~reads were
 filtered to those carrying an expected round-1 barcode at the kit-specific position,
 allowing one mismatch (Hamming distance $\leq 1$); and (ii)~the retained reads were
@@ -96,7 +105,9 @@ Filtered Parse reads were quantified with \texttt{kb count -{}-workflow nac} usi
 the kit-specific technology string, forward strandedness
 (\texttt{-{}-strand=forward}), and single-end parity
 (\texttt{-{}-parity=single}). A per-round barcode on-list (\texttt{-w onlist.txt})
-was supplied for barcode error correction, and a replacement map
+was supplied for barcode error correction, listing the sublibrary barcode alongside
+the three combinatorial rounds so that cells were resolved by sublibrary as well as
+by barcode combination. A replacement map
 (\texttt{-r replace.txt}) collapsed each randO round-1 barcode onto its polyT
 counterpart in the same well so that both primer chemistries contributed counts to a
 single cell. Three count matrices were produced per Parse assay: the full filtered

@@ -50,17 +50,28 @@ def setup_logger(log_file: Path) -> logging.Logger:
     return logger
 
 
+def _sublibrary_for(config: AnalysisConfig, i: int, lib_name: str) -> str:
+    '''Sublibrary label for the i-th library. Configs that don't nest accessions
+    under sublibrary names get one sublibrary per library.'''
+    if i < len(config.sublibraries):
+        return config.sublibraries[i]
+    return lib_name
+
+
 def build_era_libraries(config: AnalysisConfig, paths: BasePaths) -> list[LibraryFiles]:
     '''Generate paths for FASTQ files downloaded from ENA. Files arrive pre-gzipped.'''
     libraries: list[LibraryFiles] = []
     for i in range(len(config.era)):
         lib_name = f"Lib{i}"
+        sublibrary = _sublibrary_for(config, i, lib_name)
+        r1_num, r2_num = config.read_nums_for(sublibrary)
         libraries.append(
             LibraryFiles(
                 name=lib_name,
-                read1_fasta=paths.dumped_dir / f"{lib_name}_{config.r1_num}.fastq.gz",
-                read2_fasta=paths.dumped_dir / f"{lib_name}_{config.r2_num}.fastq.gz",
+                read1_fasta=paths.dumped_dir / f"{lib_name}_{r1_num}.fastq.gz",
+                read2_fasta=paths.dumped_dir / f"{lib_name}_{r2_num}.fastq.gz",
                 is_gzipped=True,
+                sublibrary=sublibrary,
             )
         )
     return libraries
@@ -72,27 +83,36 @@ def build_libraries(config: AnalysisConfig, paths: BasePaths) -> list[LibraryFil
     libraries: list[LibraryFiles] = []
     for i in range(len(config.sra)):
         lib_name = f"Lib{i}"
+        sublibrary = _sublibrary_for(config, i, lib_name)
+        r1_num, r2_num = config.read_nums_for(sublibrary)
         libraries.append(
             LibraryFiles(
                 name=lib_name,
-                read1_fasta=paths.dumped_dir / f"{lib_name}_{config.r1_num}.fasta",
-                read2_fasta=paths.dumped_dir / f"{lib_name}_{config.r2_num}.fasta",
+                read1_fasta=paths.dumped_dir / f"{lib_name}_{r1_num}.fasta",
+                read2_fasta=paths.dumped_dir / f"{lib_name}_{r2_num}.fasta",
+                sublibrary=sublibrary,
             )
         )
     return libraries
 
 
 def build_local_libraries(config: AnalysisConfig, paths: BasePaths) -> list[LibraryFiles]:
-    '''Discover pre-existing gzipped FASTQ files in dumped_dir. Expects Lib{i}_{read_num}.fastq.gz naming.'''
+    '''Discover pre-existing gzipped FASTQ files in dumped_dir. Expects Lib{i}_{read_num}.fastq.gz naming.
+
+    Each file pair is treated as its own sublibrary — pre-downloaded files belonging to the
+    same sublibrary must already be concatenated.'''
     libraries: list[LibraryFiles] = []
     i = 0
     while True:
         lib_name = f"Lib{i}"
-        r1 = paths.dumped_dir / f"{lib_name}_{config.r1_num}.fastq.gz"
+        r1_num, r2_num = config.read_nums_for(lib_name)
+        r1 = paths.dumped_dir / f"{lib_name}_{r1_num}.fastq.gz"
         if not r1.exists():
             break
-        r2 = paths.dumped_dir / f"{lib_name}_{config.r2_num}.fastq.gz"
-        libraries.append(LibraryFiles(name=lib_name, read1_fasta=r1, read2_fasta=r2, is_gzipped=True))
+        r2 = paths.dumped_dir / f"{lib_name}_{r2_num}.fastq.gz"
+        libraries.append(
+            LibraryFiles(name=lib_name, read1_fasta=r1, read2_fasta=r2, is_gzipped=True, sublibrary=lib_name)
+        )
         i += 1
     return libraries
 

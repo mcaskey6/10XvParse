@@ -43,8 +43,8 @@ if __name__ == "__main__":
     os.makedirs(settings.root_dir / "Logs", exist_ok=True)
     logger = setup_logger(settings.root_dir / "Logs" / "analysis5.txt")
 
-    # load_all(settings, config_file, logger)
-    # subsample_num = get_subsample_num(settings, config_file, ten_x_assays=["10x"], parse_assays=["parse"], logger=logger)
-    # subsample_all(settings, config_file, subsample_num, logger)
-
+    load_all(settings, config_file, logger)
+    subsample_num = get_subsample_num(settings, config_file, ten_x_assays=["10x"], parse_assays=["parse"], logger=logger)
+    subsample_all(settings, config_file, subsample_num, logger)
     genebody_plots(settings, config_file, logger)
+

@@ -2,9 +2,11 @@ name: Analysis_4
 
 ERA:
   10x:
-    - ERR12398015
+  - ERR12398015
   parse:
+    sub1:
     - ERR12167397
+    sub2:
     - ERR12167398
 
 # ENA files arrive as _1.fastq.gz / _2.fastq.gz
@@ -15,6 +17,11 @@ read_num:
   parse:
     R1: 1
     R2: 2
+    # ERR12167397 (sub1) was uploaded with the barcode read on _1 rather than _2,
+    # opposite to sub2. Override so its barcode read is picked up correctly.
+    sub1:
+      R1: 2
+      R2: 1
 
 # Barnyard (human + mouse) reference. Human genes will be prefixed HUMAN_, mouse MOUSE_.
 species: human_mouse

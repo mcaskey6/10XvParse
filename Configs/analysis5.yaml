@@ -5,7 +5,8 @@ SRA:
  - SRR26594154
  - SRR26594153
  parse:
- - SRR28867558
+  sub1:
+  - SRR28867558
 
 # The suffix for the R1 and R2 FASTA files dumped from fasterq-dump. For some reason these change across datasets
 read_num:

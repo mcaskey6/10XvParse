@@ -59,6 +59,26 @@ class IndexConfig:
         )
 
 
+def _flatten_accessions(entry) -> tuple[list[str], list[str]]:
+    '''Accept a flat accession list or a {sublibrary: [accessions]} mapping.
+
+    Returns (accessions, sublibrary labels). The labels list is parallel to the
+    accession list; it is empty for a flat list. Mapping key order is preserved
+    (yaml.safe_load keeps insertion order), and that order determines which
+    splitcode remultiplexing barcode each sublibrary receives — so reordering
+    sublibraries in the YAML invalidates any previously generated data.
+    '''
+    if isinstance(entry, dict):
+        accessions: list[str] = []
+        sublibraries: list[str] = []
+        for sublibrary, sublibrary_accessions in entry.items():
+            for accession in sublibrary_accessions:
+                accessions.append(accession)
+                sublibraries.append(sublibrary)
+        return accessions, sublibraries
+    return list(entry or []), []
+
+
 @dataclass(frozen=True)
 class AnalysisConfig:
     '''Object to store information from the analysis YAML file'''
@@ -71,29 +91,55 @@ class AnalysisConfig:
     # Accession lists — one of sra or era will be populated
     sra: list[str] = field(default_factory=list)
     era: list[str] = field(default_factory=list)
+    # Sublibrary label per accession, parallel to sra/era. Empty when the config
+    # lists accessions flatly rather than nested under sublibrary names.
+    sublibraries: list[str] = field(default_factory=list)
     # Optional R2 trim length (bp) — used for feature barcode libraries where long reads
     # cause downstream k-mers to collide with kite index entries from other barcodes
     r2_trim_length: int | None = None
     # Optional well subset for Parse kits — empty list means use all wells
     wells: list[str] = field(default_factory=list)
+    # Optional per-sublibrary (R1, R2) read-number overrides. Needed when a sublibrary's
+    # FASTQ files carry the barcodes on the opposite read from the rest of the assay
+    # (e.g. one Parse sublibrary uploaded with R1/R2 swapped).
+    read_num_overrides: dict[str, tuple[int, int]] = field(default_factory=dict)
 
     @property
     def is_barnyard(self) -> bool:
         return "_" in self.species
 
+    def read_nums_for(self, sublibrary: str) -> tuple[int, int]:
+        '''(r1_num, r2_num) for a sublibrary, honoring any per-sublibrary override.'''
+        return self.read_num_overrides.get(sublibrary, (self.r1_num, self.r2_num))
+
     @classmethod
     def from_yaml(cls, config_file: Path, assay: str) -> "AnalysisConfig":
         '''Reads yaml file to initialize object. Supports both SRA and ERA accessions,
-        and both single-species and barnyard (dual-species) reference configs.'''
+        and both single-species and barnyard (dual-species) reference configs.
+        Accessions may be listed flatly or nested under sublibrary names.'''
         with open(config_file, "r") as f:
             raw = yaml.safe_load(f)
 
+        sra, sra_sublibraries = _flatten_accessions(raw.get("SRA", {}).get(assay, []))
+        era, era_sublibraries = _flatten_accessions(raw.get("ERA", {}).get(assay, []))
+
+        # read_num[assay] carries the default R1/R2; any additional keys are per-sublibrary
+        # overrides of the form {sublibrary: {R1: n, R2: m}}.
+        read_num = raw["read_num"][assay]
+        overrides = {
+            sub: (spec["R1"], spec["R2"])
+            for sub, spec in read_num.items()
+            if sub not in ("R1", "R2") and isinstance(spec, dict)
+        }
+
         return cls(
             name=raw["name"],
-            sra=raw.get("SRA", {}).get(assay, []),
-            era=raw.get("ERA", {}).get(assay, []),
-            r1_num=raw["read_num"][assay]["R1"],
-            r2_num=raw["read_num"][assay]["R2"],
+            sra=sra,
+            era=era,
+            sublibraries=sra_sublibraries or era_sublibraries,
+            r1_num=read_num["R1"],
+            r2_num=read_num["R2"],
+            read_num_overrides=overrides,
             species=raw["species"],
             technology=raw["tech"][assay],
             r2_trim_length=raw.get("trim", {}).get(assay),
@@ -331,6 +377,13 @@ class LibraryFiles:
     read1_fasta: Path
     read2_fasta: Path
     is_gzipped: bool = False    # True when files are already gzipped (e.g. ERA downloads)
+    sublibrary: str = ""        # Sublibrary this library belongs to; defaults to name
+
+    @property
+    def batch_name(self) -> str:
+        '''Name written to the splitcode batch file. Libraries sharing a name are
+        assigned the same remultiplexing barcode.'''
+        return self.sublibrary or self.name
 
     @property
     def output_files(self) -> list[Path]:

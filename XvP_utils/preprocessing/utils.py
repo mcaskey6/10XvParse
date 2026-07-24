@@ -124,31 +124,47 @@ def multiplex_fastqs(
     libraries: list[LibraryFiles],
     threads: int,
     logger: logging.Logger,
+    bclen: int | None = None,
 ) -> None:
-    '''Combine all downloaded FASTA files into one FASTQ file with splitcode'''
+    '''Combine all downloaded FASTA files into one FASTQ file with splitcode
+
+    With `bclen` set, splitcode prepends a synthetic per-sublibrary barcode of that length,
+    which is what lets Parse sublibraries share one FASTQ without their cells colliding.
+    splitcode embeds the barcode in the first output file, so the file order is swapped to
+    put the barcode read first; multiplexed_files itself keeps its cDNA-first order.
+    Libraries whose batch name matches share a barcode.
+    '''
+
+    # splitcode assigns barcodes in order of first appearance in the batch file, so the
+    # barcode a sublibrary receives depends on the order libraries are listed here.
+    barcode_read_first = bclen is not None
 
     logger.debug("Writing batch file for splitcode multiplexing")
     with open(batch_file, "w") as batch:
         for library in libraries:
             r1, r2 = library.gz_files
-            batch.write(f"{library.name}\t{r1}\t{r2}\n")
+            first, second = (r2, r1) if barcode_read_first else (r1, r2)
+            batch.write(f"{library.batch_name}\t{first}\t{second}\n")
+
+    outputs = list(reversed(multiplexed_files)) if barcode_read_first else multiplexed_files
+
+    command = [
+        "splitcode",
+        "--remultiplex",
+        "--nFastqs=2",
+        "--gzip",
+        "-o",
+        f"{str(outputs[0])},{str(outputs[1])}",
+    ]
+    if bclen is None:
+        # Without a sublibrary barcode there is nothing to embed or write out
+        command.append("--no-outb")
+    else:
+        command.append(f"--bclen={bclen}")
+    command += [str(batch_file), "-t", str(threads)]
 
     logger.info("Multiplexing %d libraries -> %s (splitcode)", len(libraries), multiplexed_files[0].parent)
-    io.run_command(
-        [
-            "splitcode",
-            "--remultiplex",
-            "--nFastqs=2",
-            "--gzip",
-            "-o",
-            f"{str(multiplexed_files[0])},{str(multiplexed_files[1])}",
-            "--no-outb",
-            str(batch_file),
-            "-t",
-            str(threads),
-        ],
-        logger,
-    )
+    io.run_command(command, logger)
 
 
 def filter_parse_fastqs(
@@ -480,8 +496,9 @@ def download_era_fastq(
 ) -> None:
     '''Download one ERA run's paired FASTQ files from ENA FTP.'''
     logger.info("Downloading ERA run %s", err)
-    io.download_ftp_file(era_ftp_url(err, config.r1_num), library.read1_fasta, logger)
-    io.download_ftp_file(era_ftp_url(err, config.r2_num), library.read2_fasta, logger)
+    r1_num, r2_num = config.read_nums_for(library.sublibrary)
+    io.download_ftp_file(era_ftp_url(err, r1_num), library.read1_fasta, logger)
+    io.download_ftp_file(era_ftp_url(err, r2_num), library.read2_fasta, logger)
 
 
 def make_barnyard_reference(
@@ -547,6 +564,7 @@ def _multiplex_into_fastq(
     paths: BasePaths,
     libraries: list[LibraryFiles],
     logger: logging.Logger,
+    bclen: int | None = None,
 ) -> None:
     '''Multiplex pre-downloaded library files into a single paired FASTQ with splitcode.'''
     processed_exist = all(p.is_file() for p in paths.multiplexed_files)
@@ -557,6 +575,7 @@ def _multiplex_into_fastq(
             libraries=libraries,
             threads=settings.threads,
             logger=logger,
+            bclen=bclen,
         )
     else:
         logger.info(
@@ -566,7 +585,14 @@ def _multiplex_into_fastq(
         )
 
 
-def core_pipeline(settings: RunSettings, paths: BasePaths, config: AnalysisConfig, assay: str, logger: logging.Logger) -> None:
+def core_pipeline(
+    settings: RunSettings,
+    paths: BasePaths,
+    config: AnalysisConfig,
+    assay: str,
+    logger: logging.Logger,
+    bclen: int | None = None,
+) -> None:
     '''Download SRA reads and multiplex into a single paired FASTQ. Reference download is handled by the caller.'''
 
     logger.info("[%s/%s] Starting SRA pipeline", config.name, assay)
@@ -591,7 +617,7 @@ def core_pipeline(settings: RunSettings, paths: BasePaths, config: AnalysisConfi
                 library.name,
             )
 
-    _multiplex_into_fastq(settings, paths, libraries, logger)
+    _multiplex_into_fastq(settings, paths, libraries, logger, bclen)
 
 
 def era_core_pipeline(
@@ -600,6 +626,7 @@ def era_core_pipeline(
     config: AnalysisConfig,
     assay: str,
     logger: logging.Logger,
+    bclen: int | None = None,
 ) -> None:
     '''Download ERA reads from ENA FTP and multiplex into a single paired FASTQ.'''
 
@@ -614,7 +641,7 @@ def era_core_pipeline(
         else:
             logger.info("Files for %s already downloaded. Skipping.", err)
 
-    _multiplex_into_fastq(settings, paths, libraries, logger)
+    _multiplex_into_fastq(settings, paths, libraries, logger, bclen)
 
 
 def local_pipeline(
@@ -623,6 +650,7 @@ def local_pipeline(
     config: AnalysisConfig,
     assay: str,
     logger: logging.Logger,
+    bclen: int | None = None,
 ) -> None:
     '''Use pre-existing FASTQ files from dumped_dir when no SRA/ERA accessions are provided.'''
     logger.info("No accessions in config for %s — checking for local files in %s", assay, paths.dumped_dir)
@@ -635,7 +663,7 @@ def local_pipeline(
     missing = [p for lib in libraries for p in lib.gz_files if not p.is_file()]
     if missing:
         raise FileNotFoundError(f"Local library files missing: {missing}")
-    _multiplex_into_fastq(settings, paths, libraries, logger)
+    _multiplex_into_fastq(settings, paths, libraries, logger, bclen)
 
 def count_reads(fastq_gz: Path) -> int:
     '''Count reads in a gzipped FASTQ by dividing line count by 4.'''
@@ -714,14 +742,16 @@ def run_star_parse(
     assay: str,
     fastq_files: list[Path],
     tag: str,
+    x_string: str,
     logger: logging.Logger,
     overwrite: bool = False,
 ) -> str:
-    '''Run STARsolo (CB_UMI_Complex) on Parse data to generate a BAM for downstream 
+    '''Run STARsolo (CB_UMI_Complex) on Parse data to generate a BAM for downstream
     gene body coverage analysis.
 
     Call once per read subset, passing the appropriate fastq_files and a tag that becomes
-    the filename prefix (e.g. "all", "polyT", "randO"). Returns the outfile prefix
+    the filename prefix (e.g. "all", "polyT", "randO"). `x_string` must be the same
+    (sublibrary-shifted) technology string used for pseudoalignment. Returns the outfile prefix
     '''
     from . import parse_config as pc
 
@@ -741,15 +771,14 @@ def run_star_parse(
     else:
         logger.info("STAR index already exists at %s. Skipping build.", paths.star_index_dir)
 
-    x_string = pc.generate_parse_configs(
-        config.technology,
-        paths.parse_info_dir,
-        paths.config_dir / config.name / assay,
-        config.wells or None,
-        logger,
-    )
     cb_positions, umi_position = pc.x_string_to_star_params(x_string)
     configs_dir = paths.config_dir / config.name / assay
+
+    # One whitelist per --soloCBposition, in x_string order. The sublibrary barcode comes
+    # first when the reads were remultiplexed with one.
+    whitelists = [configs_dir / f"star_bc{i}.txt" for i in (3, 2, 1)]
+    if len(cb_positions) == len(whitelists) + 1:
+        whitelists.insert(0, configs_dir / "lib_bc.txt")
 
     outfile_prefix = str(paths.star_dir) + f"/{tag}_"
 
@@ -760,10 +789,7 @@ def run_star_parse(
             [
                 "STAR",
                 "--soloType", "CB_UMI_Complex",
-                "--soloCBwhitelist",
-                str(configs_dir / "star_bc3.txt"),
-                str(configs_dir / "star_bc2.txt"),
-                str(configs_dir / "star_bc1.txt"),
+                "--soloCBwhitelist", *[str(w) for w in whitelists],
                 "--soloCBposition", *cb_positions,
                 "--soloUMIposition", umi_position,
                 "--soloBarcodeReadLength", "0",
@@ -891,7 +917,11 @@ def generate_genebody_plot(
         bed_file = hk_bed_file
 
     for bam in bam_files:
-        if not Path(str(bam) + ".bai").is_file() or settings.overwrite:
+        # Re-index whenever the BAM is newer than its index: STAR rewrites BAMs on every
+        # run_kb pass, so an existing .bai is not evidence that it matches the current BAM.
+        bai = Path(str(bam) + ".bai")
+        stale = bai.is_file() and bai.stat().st_mtime < Path(bam).stat().st_mtime
+        if not bai.is_file() or stale or settings.overwrite:
             io.run_command(["samtools", "index", str(bam)], logger=logger)
 
     if not tag:

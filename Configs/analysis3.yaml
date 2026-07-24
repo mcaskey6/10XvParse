@@ -6,23 +6,39 @@ SRA:
  10x_H2:
  - SRR26594153
  parse_H1:
- - SRR26594152
- - SRR26594150
- - SRR26594148
- - SRR26594146
- - SRR26594144
- - SRR26594143
- - SRR26594141
- - SRR26594139
+  sub1:
+  - SRR26594152
+  sub2:
+  - SRR26594150
+  sub3:
+  - SRR26594148
+  sub4:
+  - SRR26594146
+  sub5:
+  - SRR26594144
+  sub6:
+  - SRR26594143
+  sub7:
+  - SRR26594141
+  sub8:
+  - SRR26594139
  parse_H2:
- - SRR26594151
- - SRR26594149
- - SRR26594147
- - SRR26594145
- - SRR26594155
- - SRR26594142
- - SRR26594140
- - SRR26594138
+  sub1:
+  - SRR26594151
+  sub2:
+  - SRR26594149
+  sub3:
+  - SRR26594147
+  sub4:
+  - SRR26594145
+  sub5:
+  - SRR26594155
+  sub6:
+  - SRR26594142
+  sub7:
+  - SRR26594140
+  sub8:
+  - SRR26594138
 
 # The suffix for the R1 and R2 FASTA files dumped from fasterq-dump. For some reason these change across datasets
 read_num:

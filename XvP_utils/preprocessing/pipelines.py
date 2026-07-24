@@ -26,14 +26,60 @@ def _download_reference(settings: RunSettings, paths: TenXPaths, index_config: I
         logger.info("Reference files already exist (%s). Skipping download.", paths.genome_file)
 
 
-def _run_core_pipeline(settings: RunSettings, paths, config: AnalysisConfig, assay: str, logger: logging.Logger) -> None:
+def _run_core_pipeline(
+    settings: RunSettings,
+    paths,
+    config: AnalysisConfig,
+    assay: str,
+    logger: logging.Logger,
+    bclen: int | None = None,
+) -> None:
     '''Route to ERA, SRA, or local-files pipeline based on what accessions the config provides.'''
     if config.era:
-        utils.era_core_pipeline(settings, paths, config, assay, logger)
+        utils.era_core_pipeline(settings, paths, config, assay, logger, bclen)
     elif config.sra:
-        utils.core_pipeline(settings, paths, config, assay, logger)
+        utils.core_pipeline(settings, paths, config, assay, logger, bclen)
     else:
-        utils.local_pipeline(settings, paths, config, assay, logger)
+        utils.local_pipeline(settings, paths, config, assay, logger, bclen)
+
+
+def _parse_sublibraries(config: AnalysisConfig, paths: ParsePaths) -> list[str]:
+    '''Sublibrary label per library, in the order libraries reach the splitcode batch file.
+
+    Comes from the sublibrary names the config nests its accessions under. Configs without
+    that nesting (notably pre-downloaded local files) get one sublibrary per library.
+    '''
+    if config.sublibraries:
+        return config.sublibraries
+    if config.sra or config.era:
+        return [f"Lib{i}" for i in range(len(config.sra or config.era))]
+    return [library.name for library in io.build_local_libraries(config, paths)]
+
+
+def _setup_parse_configs(
+    config: AnalysisConfig,
+    paths: ParsePaths,
+    assay: str,
+    logger: logging.Logger,
+) -> str:
+    '''Generate the Parse splitcode/kb-python config files, registering the sublibrary
+    barcode as a fourth cell barcode. Returns the shifted kb-python x_string.'''
+    if not parse_config.is_parse_kit(config.technology):
+        raise ValueError(
+            f"'{config.technology}' is not a valid Parse kit name for assay '{assay}'. "
+            "Expected format: '<kit>_v<chem>', e.g. 'WT_v2' or 'WT_mini_v3'."
+        )
+
+    sublibraries = _parse_sublibraries(config, paths)
+    return parse_config.generate_parse_configs(
+        kit_name=config.technology,
+        parse_info_dir=paths.parse_info_dir,
+        output_dir=paths.config_dir / config.name / assay,
+        wells=config.wells or None,
+        logger=logger,
+        lib_barcodes=parse_config.sublibrary_barcodes(sublibraries),
+        sublibraries=sublibraries,
+    )
 
 
 def load_10x(settings: RunSettings, config_file: str, assay: str, logger: logging.Logger) -> None:
@@ -86,23 +132,12 @@ def load_parse(settings: RunSettings, config_file: str, assay: str, logger: logg
     paths = ParsePaths.build(settings, config, assay)
     paths.ensure_dirs(logger)
 
-    if not parse_config.is_parse_kit(config.technology):
-        raise ValueError(
-            f"'{config.technology}' is not a valid Parse kit name for assay '{assay}'. "
-            "Expected format: '<kit>_v<chem>', e.g. 'WT_v2' or 'WT_mini_v3'."
-        )
-    x_string = parse_config.generate_parse_configs(
-        kit_name=config.technology,
-        parse_info_dir=paths.parse_info_dir,
-        output_dir=paths.config_dir / config.name / assay,
-        wells=config.wells or None,
-        logger=logger,
-    )
+    x_string = _setup_parse_configs(config, paths, assay, logger)
     bc1_location = parse_config.x_string_to_bc1_location(x_string)
 
     index_config = _load_index_config(settings, config)
     _download_reference(settings, paths, index_config, logger)
-    _run_core_pipeline(settings, paths, config, assay, logger)
+    _run_core_pipeline(settings, paths, config, assay, logger, parse_config.LIB_BC_LEN)
 
     filter_parse_fastqs_exist = all(p.is_file() for p in paths.filtered_files)
     if not filter_parse_fastqs_exist or settings.overwrite:
@@ -140,18 +175,7 @@ def subsample_parse(settings: RunSettings, config_file: str, assay: str, subsamp
     paths = ParsePaths.build(settings, config, assay)
     paths.ensure_dirs(logger)
 
-    if not parse_config.is_parse_kit(config.technology):
-        raise ValueError(
-            f"'{config.technology}' is not a valid Parse kit name for assay '{assay}'. "
-            "Expected format: '<kit>_v<chem>', e.g. 'WT_v2' or 'WT_mini_v3'."
-        )
-    x_string = parse_config.generate_parse_configs(
-        kit_name=config.technology,
-        parse_info_dir=paths.parse_info_dir,
-        output_dir=paths.config_dir / config.name / assay,
-        wells=config.wells or None,
-        logger=logger,
-    )
+    x_string = _setup_parse_configs(config, paths, assay, logger)
 
     sampled_parse_exist = all(p.is_file() for p in paths.sampled_files)
     if not sampled_parse_exist or settings.overwrite:
@@ -347,44 +371,26 @@ def get_genebody_plot(
     paths_parse = ParsePaths.build(settings, config_parse, parse_assay)
     paths_parse.ensure_dirs(logger)
 
-    star_prefixes.append(
-        utils.run_star_parse(
-            paths=paths_parse,
-            config=config_parse,
-            settings=settings,
-            assay=parse_assay,
-            fastq_files=paths_parse.sampled_files,
-            logger=logger,
-            tag="parse",
-            overwrite=settings.run_kb
-        )
-    )
+    parse_x_string = _setup_parse_configs(config_parse, paths_parse, parse_assay, logger)
 
-    star_prefixes.append(
-        utils.run_star_parse(
-            paths=paths_parse,
-            config=config_parse,
-            settings=settings,
-            assay=parse_assay,
-            fastq_files=paths_parse.sampled_polyT_files,
-            logger=logger,
-            tag="polyT",
-            overwrite=settings.run_kb
+    for parse_tag, fastq_files in [
+        ("parse", paths_parse.sampled_files),
+        ("polyT", paths_parse.sampled_polyT_files),
+        ("randO", paths_parse.sampled_randO_files),
+    ]:
+        star_prefixes.append(
+            utils.run_star_parse(
+                paths=paths_parse,
+                config=config_parse,
+                settings=settings,
+                assay=parse_assay,
+                fastq_files=fastq_files,
+                logger=logger,
+                tag=parse_tag,
+                x_string=parse_x_string,
+                overwrite=settings.run_kb
+            )
         )
-    )
-
-    star_prefixes.append(
-        utils.run_star_parse(
-            paths=paths_parse,
-            config=config_parse,
-            settings=settings,
-            assay=parse_assay,
-            fastq_files=paths_parse.sampled_randO_files,
-            logger=logger,
-            tag="randO",
-            overwrite=settings.run_kb
-        )
-    )
 
     index_config = _load_index_config(settings, config_10x)
     bam_files = [prefix + "Aligned.sortedByCoord.out.bam" for prefix in star_prefixes]

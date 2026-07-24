@@ -33,7 +33,7 @@ if __name__ == "__main__":
     settings = RunSettings(
         root_dir=Path(__file__).parent.parent,
         config_name="analysis4.yaml",
-        overwrite=True,
+        overwrite=False,
         run_kb=True,
         threads=16,
         max_workers=4,
@@ -43,11 +43,8 @@ if __name__ == "__main__":
     os.makedirs(settings.root_dir / "Logs", exist_ok=True)
     logger = setup_logger(settings.root_dir / "Logs" / "analysis4.txt")
 
-    # load_all(settings, config_file, logger)
-    # subsample_num = get_subsample_num(settings, config_file, ten_x_assays=["10x"], parse_assays=["parse"], logger=logger)
-    # subsample_all(settings, config_file, subsample_num, logger)
-
-
+    load_all(settings, config_file, logger)
     subsample_num = get_subsample_num(settings, config_file, ten_x_assays=["10x"], parse_assays=["parse"], logger=logger)
-    subsample_10x(settings, config_file, "10x", subsample_num, logger)
+    subsample_all(settings, config_file, subsample_num, logger)
     genebody_plots(settings, config_file, logger)
+

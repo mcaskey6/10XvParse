@@ -7,9 +7,72 @@ from pathlib import Path
 
 _PARSE_PATTERN = re.compile(r"^.+_v\d+$")
 
+# Length of the synthetic sublibrary barcode splitcode prepends when remultiplexing
+# Parse libraries. Parse sublibraries cannot be concatenated without one: the sequencing
+# index acts as a fourth cell barcode, so identical bc1/bc2/bc3 combinations from
+# different sublibraries are different cells.
+LIB_BC_LEN = 4
+
 
 def is_parse_kit(tech_str: str) -> bool:
     return bool(_PARSE_PATTERN.match(tech_str))
+
+
+def library_barcode(index: int, bclen: int = LIB_BC_LEN) -> str:
+    """Reproduce the remultiplexing barcode splitcode assigns to the index-th sublibrary.
+
+    splitcode encodes the sublibrary index (0-based, in order of first appearance in the
+    batch file) as a 2-bit big-endian sequence with A=0, C=1, G=2, T=3, giving
+    AAAA, AAAC, AAAG, AAAT, AACA, ... for --bclen=4.
+
+    Computed here rather than read from splitcode's --mapping output, which reports the
+    batch-file row index instead of the deduplicated sublibrary index and so is wrong
+    whenever a sublibrary spans more than one row.
+    """
+    if index >= 4 ** bclen:
+        raise ValueError(f"Sublibrary index {index} does not fit in a {bclen}-mer barcode")
+    return "".join("ACGT"[(index >> (2 * shift)) & 0b11] for shift in reversed(range(bclen)))
+
+
+def distinct_sublibraries(labels: list[str]) -> list[str]:
+    """Sublibrary labels de-duplicated, in order of first appearance.
+
+    Mirrors splitcode's batch file handling, where rows sharing a name are assigned
+    the same barcode.
+    """
+    seen: list[str] = []
+    for label in labels:
+        if label not in seen:
+            seen.append(label)
+    return seen
+
+
+def sublibrary_barcodes(labels: list[str], bclen: int = LIB_BC_LEN) -> list[str]:
+    """Barcode for each distinct sublibrary label, in order of first appearance."""
+    return [library_barcode(i, bclen) for i in range(len(distinct_sublibraries(labels)))]
+
+
+def shift_x_string(x_string: str, bclen: int = LIB_BC_LEN, bc_file: int = 1) -> str:
+    """Add the sublibrary barcode to a kb-python x_string.
+
+    Prepends a barcode triplet covering the first `bclen` bases of the barcode read and
+    shifts every other coordinate on that read right by `bclen`, to account for the
+    sequence splitcode prepends when remultiplexing. Triplets on other files (the cDNA
+    read) are left alone.
+    """
+    def shift_part(part: str) -> str:
+        nums = [int(n) for n in part.split(",")]
+        shifted = []
+        for i in range(0, len(nums), 3):
+            file_idx, start, end = nums[i:i + 3]
+            if file_idx == bc_file:
+                start, end = start + bclen, end + bclen
+            shifted += [file_idx, start, end]
+        return ",".join(str(n) for n in shifted)
+
+    bc_part, umi_part, seq_part = x_string.split(":")
+    bc_part = f"{bc_file},0,{bclen}," + shift_part(bc_part)
+    return ":".join([bc_part, shift_part(umi_part), seq_part])
 
 
 def _parse_kit_name(kit_name: str) -> tuple[str, int]:
@@ -49,8 +112,15 @@ def generate_parse_configs(
     output_dir: Path,
     wells: list[str] | None = None,
     logger: logging.Logger | None = None,
+    lib_barcodes: list[str] | None = None,
+    sublibraries: list[str] | None = None,
 ) -> str:
     """Generate Parse config files for a given kit and optional well filter.
+
+    Pass `lib_barcodes` (from `sublibrary_barcodes`) to register the splitcode
+    remultiplexing barcode as a fourth cell barcode: it becomes the leading column of
+    onlist.txt, gets its own STARsolo whitelist, and the returned x_string is shifted
+    accordingly. `sublibraries` is the matching list of labels, recorded for provenance.
 
     Returns the kb-python x_string for the kit.
     """
@@ -84,15 +154,17 @@ def generate_parse_configs(
     bcs_lines = [f"{s}\t{w}" for s, w in bc1_T] + [f"{s}\t{w}" for s, w in bc1_R]
     (output_dir / "bcs_to_wells.txt").write_text("\n".join(bcs_lines) + "\n")
 
-    # onlist.txt — columns: bc3 | bc2 | bc1 (T+R combined, CSV order), padded with "-"
+    # onlist.txt — one column per barcode, in x_string order, padded with "-":
+    # [sublibrary] | bc3 | bc2 | bc1 (T+R combined, CSV order)
     bc1_all_seqs = [s for s, _ in bc1_T] + [s for s, _ in bc1_R]
-    max_rows = max(len(bc3_seqs), len(bc2_seqs), len(bc1_all_seqs))
-    onlist_lines = []
-    for k in range(max_rows):
-        col1 = bc3_seqs[k] if k < len(bc3_seqs) else "-"
-        col2 = bc2_seqs[k] if k < len(bc2_seqs) else "-"
-        col3 = bc1_all_seqs[k] if k < len(bc1_all_seqs) else "-"
-        onlist_lines.append(f"{col1} {col2} {col3}")
+    columns = [bc3_seqs, bc2_seqs, bc1_all_seqs]
+    if lib_barcodes:
+        columns.insert(0, lib_barcodes)
+    max_rows = max(len(col) for col in columns)
+    onlist_lines = [
+        " ".join(col[k] if k < len(col) else "-" for col in columns)
+        for k in range(max_rows)
+    ]
     (output_dir / "onlist.txt").write_text("\n".join(onlist_lines) + "\n")
 
     # replace.txt — bc1 R-type → *T-type for the same well
@@ -109,15 +181,36 @@ def generate_parse_configs(
     (output_dir / "star_bc2.txt").write_text("\n".join(bc2_seqs) + "\n")
     (output_dir / "star_bc1.txt").write_text("\n".join(bc1_all_seqs) + "\n")
 
+    if not lib_barcodes:
+        if logger:
+            logger.info(
+                "Generated Parse configs for %s (%d wells) in %s",
+                kit_name,
+                len(wells) if wells else len(bc1_T),
+                output_dir,
+            )
+        return kit_info["x_string"]
+
+    # lib_bc.txt — sublibrary barcode whitelist for STARsolo (first --soloCBwhitelist file)
+    (output_dir / "lib_bc.txt").write_text("\n".join(lib_barcodes) + "\n")
+
+    # sublibraries.txt — which barcode splitcode assigned to which sublibrary
+    labels = distinct_sublibraries(sublibraries or [])
+    labels += [f"sublibrary_{i}" for i in range(len(labels), len(lib_barcodes))]
+    (output_dir / "sublibraries.txt").write_text(
+        "\n".join(f"{bc}\t{label}" for bc, label in zip(lib_barcodes, labels)) + "\n"
+    )
+
     if logger:
         logger.info(
-            "Generated Parse configs for %s (%d wells) in %s",
+            "Generated Parse configs for %s (%d wells, %d sublibraries) in %s",
             kit_name,
             len(wells) if wells else len(bc1_T),
+            len(lib_barcodes),
             output_dir,
         )
 
-    return kit_info["x_string"]
+    return shift_x_string(kit_info["x_string"], len(lib_barcodes[0]))
 
 
 def x_string_to_bc1_location(x_string: str) -> str:

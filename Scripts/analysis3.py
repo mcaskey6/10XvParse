@@ -63,5 +63,4 @@ if __name__ == "__main__":
         logger=logger,
     )
     subsample_all(settings, config_file, subsample_num, logger)
-
-    #genebody_plots(settings, config_file, logger)
+    genebody_plots(settings, config_file, logger)
