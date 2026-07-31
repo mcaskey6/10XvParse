@@ -211,10 +211,45 @@ Benjamini--Hochberg procedure, and genes with FDR below the chosen threshold wer
 called as differentially represented between technologies.
 
 Genes consistently enriched in each technology were then tested for functional
-enrichment with gseapy's~\cite{fang2023gseapy} Enrichr~\cite{kuleshov2016enrichr} interface against the GO Biological Process, GO
-Molecular Function, GO Cellular Component, KEGG, and MSigDB Hallmark gene-set
-libraries, using all genes retained in the comparison as the statistical background.
-Terms with a Benjamini--Hochberg adjusted p-value below 0.05 were reported.
+enrichment against the GO Biological Process, GO Molecular Function and GO Cellular
+Component gene-set libraries, retrieved with gseapy~\cite{fang2023gseapy} from
+Enrichr~\cite{kuleshov2016enrichr} and cached locally so that the gene-set versions are
+pinned. Because GC content is itself predictive of differential representation in these
+comparisons, a conventional hypergeometric test would report terms that are enriched
+merely because their genes are GC-extreme. Enrichment was therefore computed with
+goseq~\cite{young2010goseq}, which fits a monotonic probability weighting function
+$P(\text{DE} \mid \text{GC})$ over the tested genes and evaluates each term with a
+Wallenius non-central hypergeometric test whose odds are the ratio of mean weights inside
+and outside the term. Median-transcript GC content was used as the bias variable, and all
+genes retained by \texttt{filterByExpr} formed the statistical universe. The uncorrected
+hypergeometric test was computed on the same universe and gene sets as an
+uncorrected reference. P-values were adjusted by the Benjamini--Hochberg procedure
+within each ontology, and terms were classified as GC-robust (adjusted p below 0.05
+both before and after correction, i.e.\ enrichment orthogonal to the GC bias) or
+GC-driven (significant only before correction). Each comparison was run over two
+universes: all tested genes, and the same set with ribosomal protein (RP/MRP) and
+oxidative-phosphorylation genes removed; excluded genes were dropped from the entire
+universe, since the weighting function is estimated over it.
+
+Because Gene Ontology output is highly redundant---nested parent and child terms, and
+semantically unrelated terms annotated to the same genes, are reported as separate
+results---significant terms were grouped by the overlap coefficient of their
+differentially expressed gene sets, $|A \cap B| / \min(|A|,|B|) \geq 0.7$. Seed groups were
+taken as the maximal cliques of the resulting similarity graph, so that every pair of terms
+within a seed exceeds the threshold; seeds whose combined gene sets overlapped by more than
+40\% (Jaccard) were then merged iteratively, following the multiple-linkage merging of
+DAVID's fuzzy functional classification~\cite{huang2009david,huang2007david}. Without this
+merging step, clique enumeration on a dense similarity graph returns many near-duplicate
+groups spanning essentially the same genes. Groups sharing the same representative term were
+additionally folded together, so that each term represents at most one group. A term may
+otherwise belong to more than one final group.
+The most significant term in each group is reported as its representative, together with the
+genes present in at least half of the group's member terms; the strict intersection over all
+members is typically empty once seeds have been merged. The overlap coefficient was used in
+preference to the Jaccard index because Gene Ontology redundancy is dominated by nested
+terms, for which the Jaccard index penalises the difference in set size, and in preference
+to semantic-similarity approaches because these terms co-occur through shared genes rather
+than through biological relatedness.
 
 \begin{table}[ht]
 \centering
@@ -240,7 +275,10 @@ Scrublet~\cite{wolock2019scrublet} & 0.2.3 & Doublet detection \\
 Biopython~\cite{cock2009biopython} & 1.87 & Transcript length / GC from cDNA FASTA \\
 statsmodels~\cite{seabold2010statsmodels} & 0.14.5 & Per-gene OLS / Cook's distance \\
 edgePython~\cite{robinson2010edger,robinson2010tmm,chen2016edger} & 0.2.5 & Pseudobulk differential composition (edgeR workflow) \\
-gseapy (Enrichr)~\cite{fang2023gseapy,kuleshov2016enrichr} & 1.2.1 & Functional enrichment \\
+gseapy (Enrichr)~\cite{fang2023gseapy,kuleshov2016enrichr} & 1.2.1 & GO gene-set retrieval \\
+goseq~\cite{young2010goseq} & 1.62.0 & GC-bias-corrected GO enrichment \\
+R~\cite{rcoreteam} & 4.5.3 & goseq runtime \\
+NetworkX~\cite{hagberg2008networkx} & --- & GO term redundancy grouping (maximal cliques) \\
 Python & 3.12.3 & --- \\
 \hline
 \end{tabular}

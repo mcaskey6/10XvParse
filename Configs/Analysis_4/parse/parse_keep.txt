@@ -1,1 +1,1 @@
-round1 /tmp/claude-1024/-home-mcaskey-10XvParse/60c285ad-1e42-4b5d-80a0-4e009f30dbc1/scratchpad/a4fix/Processed/parse
+round1 /home/mcaskey/10XvParse/Data/Analysis_4/parse/FASTA/Processed/parse

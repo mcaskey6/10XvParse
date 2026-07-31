@@ -15,6 +15,7 @@ import pandas as pd
 import urllib.request
 import urllib.parse
 import io
+import scclr
 
 _ORTHOLOGS: dict[str, str] | None = None
 
@@ -192,17 +193,9 @@ def refilter(raw_data: ad.AnnData, min_counts: int, transform: bool = False) -> 
     data.uns['percent_mature'] = data.layers['mature'].sum() / data.uns["n_raw_counts_filtered"] * 100
     data.var['percent_nascent'] = data.layers['nascent'].sum(axis=0).A1 / data.X.sum(axis=0).A1 * 100
     data.obs['percent_nascent'] = data.layers['nascent'].sum(axis=1).A1 / data.X.sum(axis=1).A1 * 100
+    data.var['percent_counts'] = data.X.sum(axis=0).A1 / data.uns['n_raw_counts_filtered'] 
     
-    if transform:
-        sc.pp.normalize_total(data, target_sum=1e6, exclude_highly_expressed=True)
-        sc.pp.log1p(data)
-        print("Applied CPM normalization and log1p transformation to the filtered data.")
-    
-    data.uns['n_counts'] = data.X.sum()
-    data.obs['n_genes'] = data.X.astype(bool).sum(axis=1).A1
-    data.var['n_cells'] = data.X.astype(bool).sum(axis=0).A1
-    data.obs['n_counts'] = data.X.sum(axis=1).A1
-    data.var['percent_counts'] = data.X.sum(axis=0).A1 / data.X.sum() * 100
+    data.var['normalized_counts'] = np.log((data.X.sum(axis=0).A1 / data.uns["n_raw_counts_filtered"] * 1e6) + 1)
 
     return data
 
@@ -687,6 +680,7 @@ def add_cell_metrics(data: ad.AnnData, gene_info: pd.DataFrame) -> None:
     mito_counts = data[:, data.var['is_mito']].X.sum(axis=1)
     ribo_counts = data[:, data.var['is_ribo']].X.sum(axis=1)
     lnc_counts = data[:, data.var['is_lnc']].X.sum(axis=1)
+    oxphos_counts = data[:, data.var['is_oxphos']].X.sum(axis=1)
 
     total_counts = data.X.sum(axis=1)
 
@@ -694,6 +688,7 @@ def add_cell_metrics(data: ad.AnnData, gene_info: pd.DataFrame) -> None:
     data.obs['percent_mito'] = np.array(mito_counts / total_counts * 100).flatten()
     data.obs['percent_ribo'] = np.array(ribo_counts / total_counts * 100).flatten()
     data.obs['percent_lnc'] = np.array(lnc_counts / total_counts * 100).flatten()
+    data.obs['percent_oxphos'] = np.array(oxphos_counts / total_counts * 100).flatten()
 
     index = data.var.index
     if 'gene_length' not in data.var.columns:
@@ -798,17 +793,17 @@ def export_bulk_counts(datasets: list[ad.AnnData], sample: str = None):
     print(f"\tparse{sample_str} total counts: {bulk_parse_df['parse'].sum():,}  ({datasets[3].n_obs:,} cells)")
 
 
-def compare_genes(data_x: ad.AnnData, data_y: ad.AnnData, lim: float, comparison_axis: str="percent_counts") -> pd.DataFrame:
-    """Compare gene percent counts between two datasets and compute Cook's distance.
+def compare_genes(data_x: ad.AnnData, data_y: ad.AnnData, comparison_axis: str="normalized_counts") -> pd.DataFrame:
+    """Compare log-normalized bulk gene counts between two datasets and compute Cook's distance.
 
     Merges var DataFrames on shared gene identifiers, fits an OLS regression of
-    y percent counts on x percent counts, and calculates Cook's distance and
+    y normalized counts on x normalized counts, and calculates Cook's distance and
     point density for each gene.
 
     Args:
         data_x: AnnData object for the x-axis dataset.
         data_y: AnnData object for the y-axis dataset.
-        lim: Maximum percent counts value to include in the regression.
+        comparison_axis: var column to compare (default: 'normalized_counts').
 
     Returns:
         DataFrame with columns "{comparison_axis}_x", "{comparison_axis}_y",
@@ -823,7 +818,6 @@ def compare_genes(data_x: ad.AnnData, data_y: ad.AnnData, lim: float, comparison
 
     shared_data = pd.merge(x_var, y_var, on=['gene_name', 'gene_id', 'gene_length', 'gc_content'], how='outer')
     shared_data.fillna(0, inplace=True)
-    shared_data = shared_data[(shared_data[f"{comparison_axis}_x"] <= lim) & (shared_data[f"{comparison_axis}_y"] <= lim)]
 
     for col in ['is_lnc', 'is_mito', 'is_ribo', 'is_pc', 'is_oxphos', 'is_pseudo']:
         shared_data[col] = shared_data[col + "_x"] | shared_data[col + "_y"]

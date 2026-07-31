@@ -76,10 +76,10 @@ def _diagonal_fisher(df: pd.DataFrame, mask: pd.Series,
         background_mask = pd.Series(True, index=df.index)
     sub  = df[mask]
     rest = df[background_mask & ~mask]
-    sa = (sub['percent_counts_y']  > sub['percent_counts_x']).sum()
-    sb = (sub['percent_counts_x']  > sub['percent_counts_y']).sum()
-    ra = (rest['percent_counts_y'] > rest['percent_counts_x']).sum()
-    rb = (rest['percent_counts_x'] > rest['percent_counts_y']).sum()
+    sa = (sub['normalized_counts_y']  > sub['normalized_counts_x']).sum()
+    sb = (sub['normalized_counts_x']  > sub['normalized_counts_y']).sum()
+    ra = (rest['normalized_counts_y'] > rest['normalized_counts_x']).sum()
+    rb = (rest['normalized_counts_x'] > rest['normalized_counts_y']).sum()
     if sa + sb == 0:
         return 1.0
     _, p = fisher_exact([[sa, sb], [ra, rb]])
@@ -478,12 +478,12 @@ def top_gene_counts(datasets: list[ad.AnnData], figsize: Tuple[float,float] = (2
 def scatter_genes(ax: matplotlib.axes.Axes, shared_data: pd.DataFrame, data_x: ad.AnnData, data_y: ad.AnnData,
                   c_column: str, xlim: float = None, ylim: float = None,
                   norm: matplotlib.colors.Normalize = None) -> matplotlib.collections.PathCollection:
-    """Scatter plot of gene percent counts comparing two datasets, colored by a metric.
+    """Scatter plot of log-normalized gene counts comparing two datasets, colored by a metric.
 
     Args:
         ax: Matplotlib axes to draw on.
-        shared_data: Output of compare_genes containing 'percent_counts_x' and
-            'percent_counts_y' columns.
+        shared_data: Output of compare_genes containing 'normalized_counts_x' and
+            'normalized_counts_y' columns.
         data_x: AnnData object for the x-axis dataset (used for axis label).
         data_y: AnnData object for the y-axis dataset (used for axis label).
         c_column: Column in shared_data used to color points.
@@ -494,19 +494,19 @@ def scatter_genes(ax: matplotlib.axes.Axes, shared_data: pd.DataFrame, data_x: a
     Returns:
         The PathCollection returned by ax.scatter, for use with fig.colorbar.
     """
-    x_percent = shared_data['percent_counts_x']
-    y_percent = shared_data['percent_counts_y']
+    x_counts = shared_data['normalized_counts_x']
+    y_counts = shared_data['normalized_counts_y']
 
-    plot = ax.scatter(x_percent,
-                      y_percent,
+    plot = ax.scatter(x_counts,
+                      y_counts,
                       norm=norm,
                       alpha=0.5,
                       s=50,
                       c=shared_data[c_column],
                       cmap='viridis')
 
-    ax.set_xlabel(data_x.uns['title'] + ' Gene Percent Count')
-    ax.set_ylabel(data_y.uns['title'] + ' Gene Percent Count')
+    ax.set_xlabel(data_x.uns['title'] + ' Log-normalized Counts')
+    ax.set_ylabel(data_y.uns['title'] + ' Log-normalized Counts')
     if xlim:
         ax.set_xlim(0, xlim)
     if ylim:
@@ -518,12 +518,12 @@ def scatter_genes(ax: matplotlib.axes.Axes, shared_data: pd.DataFrame, data_x: a
 def cat_scatter_genes(ax: matplotlib.axes.Axes, shared_data: pd.DataFrame, data_x: ad.AnnData, data_y: ad.AnnData,
                       color: str, label: str = None, xlim: float = None,
                       ylim: float = None) -> matplotlib.collections.PathCollection:
-    """Scatter plot of gene percent counts with a single categorical color.
+    """Scatter plot of log-normalized gene counts with a single categorical color.
 
     Args:
         ax: Matplotlib axes to draw on.
-        shared_data: Output of compare_genes containing 'percent_counts_x' and
-            'percent_counts_y' columns.
+        shared_data: Output of compare_genes containing 'normalized_counts_x' and
+            'normalized_counts_y' columns.
         data_x: AnnData object for the x-axis dataset (used for axis label).
         data_y: AnnData object for the y-axis dataset (used for axis label).
         color: Matplotlib color string applied to all points.
@@ -534,18 +534,18 @@ def cat_scatter_genes(ax: matplotlib.axes.Axes, shared_data: pd.DataFrame, data_
     Returns:
         The PathCollection returned by ax.scatter.
     """
-    x_percent = shared_data['percent_counts_x']
-    y_percent = shared_data['percent_counts_y']
+    x_counts = shared_data['normalized_counts_x']
+    y_counts = shared_data['normalized_counts_y']
 
-    plot = ax.scatter(x_percent,
-                      y_percent,
+    plot = ax.scatter(x_counts,
+                      y_counts,
                       s=50,
                       alpha=0.5,
                       color=color,
                       label=label)
 
-    ax.set_xlabel(data_x.uns['title'] + ' Gene Percent Count')
-    ax.set_ylabel(data_y.uns['title'] + ' Gene Percent Count')
+    ax.set_xlabel(data_x.uns['title'] + ' Log-normalized Counts')
+    ax.set_ylabel(data_y.uns['title'] + ' Log-normalized Counts')
     if xlim:
         ax.set_xlim(0, xlim)
     if ylim:
@@ -561,21 +561,22 @@ def show_correlation(ax: matplotlib.axes.Axes, shared_data: pd.DataFrame) -> Non
 
     Args:
         ax: Matplotlib axes to annotate.
-        shared_data: DataFrame with 'percent_counts_x' and 'percent_counts_y' columns.
+        shared_data: DataFrame with 'normalized_counts_x' and 'normalized_counts_y' columns.
     """
-    x_percent = shared_data['percent_counts_x']
-    y_percent = shared_data['percent_counts_y']
+    x_counts = shared_data['normalized_counts_x']
+    y_counts = shared_data['normalized_counts_y']
 
-    pearson_r = pearsonr(x_percent, y_percent).correlation
-    spearman_r = spearmanr(x_percent, y_percent).correlation
+    pearson_r = pearsonr(x_counts, y_counts).correlation
+    spearman_r = spearmanr(x_counts, y_counts).correlation
 
-    x_mean = x_percent.mean()
-    y_mean = y_percent.mean()
-    x_std = x_percent.std()
-    y_std = y_percent.std()
+    x_mean = x_counts.mean()
+    y_mean = y_counts.mean()
+    x_std = x_counts.std()
+    y_std = y_counts.std()
     CCC_r = 2 * pearson_r * x_std * y_std / (x_std**2 + y_std**2 + (x_mean - y_mean)**2)
 
-    ax.plot([0, 100], [0, 100], color='black', linestyle='--', linewidth=1.5)
+    lim = max(x_counts.max(), y_counts.max())
+    ax.plot([0, lim], [0, lim], color='black', linestyle='--', linewidth=1.5)
 
     textstr = '\n'.join((
         r'$\mathrm{r}=%.2f$' % (pearson_r,),
@@ -585,45 +586,39 @@ def show_correlation(ax: matplotlib.axes.Axes, shared_data: pd.DataFrame) -> Non
 
 
 def _label_genes(ax: matplotlib.axes.Axes, df: pd.DataFrame,
-                 n_cooks: int, n_log_ratio: int, min_pct: float) -> None:
+                 n_cooks: int, n_log_ratio: int, min_expr: float = 0.0) -> None:
     eps = 1e-10
-    expressed = df[(df['percent_counts_x'] >= min_pct) | (df['percent_counts_y'] >= min_pct)]
-    log_ratio = np.abs(np.log((expressed['percent_counts_x'] + eps) / (expressed['percent_counts_y'] + eps)))
+    expressed = df[(df['normalized_counts_x'] >= min_expr) | (df['normalized_counts_y'] >= min_expr)]
+    log_ratio = np.abs(np.log((expressed['normalized_counts_x'] + eps) / (expressed['normalized_counts_y'] + eps)))
     top_cooks_idx = df.nlargest(n_cooks, 'cooks_distance').index
     top_ratio_idx = log_ratio.nlargest(n_log_ratio).index
     for idx in top_cooks_idx.union(top_ratio_idx):
         row = df.loc[idx]
-        ax.annotate(row['gene_name'], (row['percent_counts_x'], row['percent_counts_y']),
+        ax.annotate(row['gene_name'], (row['normalized_counts_x'], row['normalized_counts_y']),
                     fontsize=7, ha='left', va='bottom', clip_on=True)
 
 
 def comparison_plotter(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
-                       norm: matplotlib.colors.Normalize, lim: float,
+                       norm: matplotlib.colors.Normalize,
                        metric: str, metric_name: str,
-                       n_cooks: int = 5, n_log_ratio: int = 5, min_pct: float = 0.1) -> None:
-    """Four-panel scatter plot comparing gene percent counts colored by a continuous metric.
+                       n_cooks: int = 5, n_log_ratio: int = 5, min_expr: float = 0.0) -> None:
+    """Four-panel scatter plot comparing log-normalized gene counts colored by a continuous metric.
 
     Args:
         compare_dfs: List of DataFrames from compare_genes, one per comparison pair.
         comparisons: List of (data_x, data_y) AnnData tuples matching compare_dfs.
         norm: Matplotlib normalisation applied to the color mapping.
-        lim: Upper axis limit applied to both x and y axes.
         metric: Column in each DataFrame used to color points.
         metric_name: Label shown on the colorbar.
     """
+    lim = max(max(df['normalized_counts_x'].max(), df['normalized_counts_y'].max())
+              for df in compare_dfs)
     fig, axs = plt.subplots(1, 4, figsize=(25, 5))
 
     for ax, df, pair in zip(axs, compare_dfs, comparisons):
-        plot = scatter_genes(ax,
-                             df,
-                             pair[0],
-                             pair[1],
-                             metric,
-                             xlim=lim,
-                             ylim=lim,
-                             norm=norm)
+        plot = scatter_genes(ax, df, pair[0], pair[1], metric, xlim=lim, ylim=lim, norm=norm)
         show_correlation(ax, df)
-        _label_genes(ax, df, n_cooks, n_log_ratio, min_pct)
+        _label_genes(ax, df, n_cooks, n_log_ratio, min_expr)
 
     fig.colorbar(plot, label=metric_name)
 
@@ -631,18 +626,17 @@ def comparison_plotter(compare_dfs: list[pd.DataFrame], comparisons: list[tuple]
     plt.show()
 
 
-def compare_by_density(compare_dfs: list[pd.DataFrame], 
-                       comparisons: list[tuple], lim: float,
-                       n_cooks: int = 5, n_log_ratio: int = 5, min_pct: float = 0.1) -> None:
+def compare_by_density(compare_dfs: list[pd.DataFrame],
+                       comparisons: list[tuple],
+                       n_cooks: int = 5, n_log_ratio: int = 5, min_expr: float = 0.0) -> None:
     """Four-panel comparison scatter plot colored by point density.
 
     Args:
         compare_dfs: List of DataFrames from compare_genes, one per comparison pair.
         comparisons: List of (data_x, data_y) AnnData tuples matching compare_dfs.
-        lim: Upper axis limit applied to both x and y axes.
         n_cooks: Number of top genes by Cook's distance to label.
-        n_log_ratio: Number of top genes by absolute log percent ratio to label.
-        min_pct: Genes where both percent_counts are below this value are excluded
+        n_log_ratio: Number of top genes by absolute log ratio to label.
+        min_expr: Genes where both normalized_counts are below this value are excluded
             from the log-ratio ranking.
     """
     c_values = []
@@ -650,21 +644,20 @@ def compare_by_density(compare_dfs: list[pd.DataFrame],
         c_values.extend(df['point_density'].tolist())
     norm = LogNorm(min(c_values), max(c_values))
 
-    comparison_plotter(compare_dfs, comparisons, norm, lim, 'point_density', 'Density',
-                       n_cooks, n_log_ratio, min_pct)
+    comparison_plotter(compare_dfs, comparisons, norm, 'point_density', 'Density',
+                       n_cooks, n_log_ratio, min_expr)
 
 
-def compare_by_cooks(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim: float,
-                     n_cooks: int = 5, n_log_ratio: int = 5, min_pct: float = 0.1) -> None:
+def compare_by_cooks(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
+                     n_cooks: int = 5, n_log_ratio: int = 5, min_expr: float = 0.0) -> None:
     """Four-panel comparison scatter plot colored by Cook's distance.
 
     Args:
         compare_dfs: List of DataFrames from compare_genes, one per comparison pair.
         comparisons: List of (data_x, data_y) AnnData tuples matching compare_dfs.
-        lim: Upper axis limit applied to both x and y axes.
         n_cooks: Number of top genes by Cook's distance to label.
-        n_log_ratio: Number of top genes by absolute log percent ratio to label.
-        min_pct: Genes where both percent_counts are below this value are excluded
+        n_log_ratio: Number of top genes by absolute log ratio to label.
+        min_expr: Genes where both normalized_counts are below this value are excluded
             from the log-ratio ranking.
     """
     c_values = []
@@ -672,21 +665,20 @@ def compare_by_cooks(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], 
         c_values.extend(df['cooks_distance'].tolist())
     norm = LogNorm(min(c_values), max(c_values))
 
-    comparison_plotter(compare_dfs, comparisons, norm, lim, 'cooks_distance', "Cook's Distance",
-                       n_cooks, n_log_ratio, min_pct)
+    comparison_plotter(compare_dfs, comparisons, norm, 'cooks_distance', "Cook's Distance",
+                       n_cooks, n_log_ratio, min_expr)
 
 
-def compare_by_length(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim: float,
-                      n_cooks: int = 5, n_log_ratio: int = 5, min_pct: float = 0.1) -> None:
+def compare_by_length(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
+                      n_cooks: int = 5, n_log_ratio: int = 5, min_expr: float = 0.0) -> None:
     """Four-panel comparison scatter plot colored by gene length.
 
     Args:
         compare_dfs: List of DataFrames from compare_genes, one per comparison pair.
         comparisons: List of (data_x, data_y) AnnData tuples matching compare_dfs.
-        lim: Upper axis limit applied to both x and y axes.
         n_cooks: Number of top genes by Cook's distance to label.
-        n_log_ratio: Number of top genes by absolute log percent ratio to label.
-        min_pct: Genes where both percent_counts are below this value are excluded
+        n_log_ratio: Number of top genes by absolute log ratio to label.
+        min_expr: Genes where both normalized_counts are below this value are excluded
             from the log-ratio ranking.
     """
     c_values = []
@@ -695,21 +687,20 @@ def compare_by_length(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
         c_values.extend(df['gene_length'].tolist())
     norm = LogNorm(min(c_values), max(c_values))
 
-    comparison_plotter(compare_dfs, comparisons, norm, lim, 'gene_length', 'Gene Length',
-                       n_cooks, n_log_ratio, min_pct)
+    comparison_plotter(compare_dfs, comparisons, norm, 'gene_length', 'Gene Length',
+                       n_cooks, n_log_ratio, min_expr)
 
 
-def compare_by_gc(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim: float,
-                  n_cooks: int = 5, n_log_ratio: int = 5, min_pct: float = 0.1) -> None:
+def compare_by_gc(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
+                  n_cooks: int = 5, n_log_ratio: int = 5, min_expr: float = 0.0) -> None:
     """Four-panel comparison scatter plot colored by GC content.
 
     Args:
         compare_dfs: List of DataFrames from compare_genes, one per comparison pair.
         comparisons: List of (data_x, data_y) AnnData tuples matching compare_dfs.
-        lim: Upper axis limit applied to both x and y axes.
         n_cooks: Number of top genes by Cook's distance to label.
-        n_log_ratio: Number of top genes by absolute log percent ratio to label.
-        min_pct: Genes where both percent_counts are below this value are excluded
+        n_log_ratio: Number of top genes by absolute log ratio to label.
+        min_expr: Genes where both normalized_counts are below this value are excluded
             from the log-ratio ranking.
     """
     c_values = []
@@ -717,12 +708,12 @@ def compare_by_gc(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim
         c_values.extend(df['gc_content'].tolist())
     norm = Normalize(min(c_values), max(c_values))
 
-    comparison_plotter(compare_dfs, comparisons, norm, lim, 'gc_content', 'Percent GC Content',
-                       n_cooks, n_log_ratio, min_pct)
+    comparison_plotter(compare_dfs, comparisons, norm, 'gc_content', 'Percent GC Content',
+                       n_cooks, n_log_ratio, min_expr)
 
 
-def compare_by_type(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim: float,
-                    n_cooks: int = 5, n_log_ratio: int = 5, min_pct: float = 0.1) -> None:
+def compare_by_type(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
+                    n_cooks: int = 5, n_log_ratio: int = 5, min_expr: float = 0.0) -> None:
     """Four-panel comparison scatter plot with categorical colors by gene biotype.
 
     Colors: protein-coding (yellow), mtRNA (blue), rRNA (red), lncRNA (green),
@@ -731,12 +722,13 @@ def compare_by_type(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], l
     Args:
         compare_dfs: List of DataFrames from compare_genes, one per comparison pair.
         comparisons: List of (data_x, data_y) AnnData tuples matching compare_dfs.
-        lim: Upper axis limit applied to both x and y axes.
         n_cooks: Number of top genes by Cook's distance to label.
-        n_log_ratio: Number of top genes by absolute log percent ratio to label.
-        min_pct: Genes where both percent_counts are below this value are excluded
+        n_log_ratio: Number of top genes by absolute log ratio to label.
+        min_expr: Genes where both normalized_counts are below this value are excluded
             from the log-ratio ranking.
     """
+    lim = max(max(df['normalized_counts_x'].max(), df['normalized_counts_y'].max())
+              for df in compare_dfs)
     fig, axs = plt.subplots(1, 4, figsize=(25, 5))
 
     for ax, df, pair in zip(axs, compare_dfs, comparisons):
@@ -750,7 +742,7 @@ def compare_by_type(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], l
                               c, label=label, xlim=lim, ylim=lim)
 
         show_correlation(ax, df)
-        _label_genes(ax, df, n_cooks, n_log_ratio, min_pct)
+        _label_genes(ax, df, n_cooks, n_log_ratio, min_expr)
 
     axs[0].legend()
 
@@ -758,8 +750,8 @@ def compare_by_type(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], l
     plt.show()
 
 
-def compare_by_pathway(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim: float,
-                       n_cooks: int = 10, n_log_ratio: int = 10, min_pct: float = 0.1) -> None:
+def compare_by_pathway(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
+                       n_cooks: int = 10, n_log_ratio: int = 10, min_expr: float = 0.0) -> None:
     """Four-panel comparison scatter plot highlighting ribosomal and OXPHOS genes.
 
     All genes are drawn in light grey; ribosomal (RP/MRP) genes are overlaid in
@@ -769,12 +761,13 @@ def compare_by_pathway(compare_dfs: list[pd.DataFrame], comparisons: list[tuple]
     Args:
         compare_dfs: List of DataFrames from compare_genes, one per comparison pair.
         comparisons: List of (data_x, data_y) AnnData tuples matching compare_dfs.
-        lim: Upper axis limit applied to both x and y axes.
         n_cooks: Number of top genes by Cook's distance to label.
-        n_log_ratio: Number of top genes by absolute log percent ratio to label.
-        min_pct: Genes where both percent_counts are below this value are excluded
+        n_log_ratio: Number of top genes by absolute log ratio to label.
+        min_expr: Genes where both normalized_counts are below this value are excluded
             from the log-ratio ranking.
     """
+    lim = max(max(df['normalized_counts_x'].max(), df['normalized_counts_y'].max())
+              for df in compare_dfs)
     fig, axs = plt.subplots(1, 4, figsize=(25, 5))
 
     for ax, df, pair in zip(axs, compare_dfs, comparisons):
@@ -785,7 +778,7 @@ def compare_by_pathway(compare_dfs: list[pd.DataFrame], comparisons: list[tuple]
                           'blue', label='OXPHOS', xlim=lim, ylim=lim)
 
         show_correlation(ax, df)
-        _label_genes(ax, df, n_cooks, n_log_ratio, min_pct)
+        _label_genes(ax, df, n_cooks, n_log_ratio, min_expr)
 
     axs[0].legend()
 
@@ -793,11 +786,11 @@ def compare_by_pathway(compare_dfs: list[pd.DataFrame], comparisons: list[tuple]
     plt.show()
 
 
-def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim: float,
+def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
                            enrichment_path: str | Path,
                            gene_sets: list[str] | None = None,
                            terms: list[str] | None = None,
-                           n_cooks: int = 10, n_log_ratio: int = 10, min_pct: float = 0.1,
+                           n_cooks: int = 10, n_log_ratio: int = 10, min_expr: float = 0.0,
                            label_enriched: bool = False) -> None:
     """Four-panel comparison scatter plot highlighting genes from GO enrichment terms.
 
@@ -812,13 +805,12 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
     Args:
         compare_dfs: List of DataFrames from compare_genes, one per comparison pair.
         comparisons: List of (data_x, data_y) AnnData tuples matching compare_dfs.
-        lim: Upper axis limit applied to both x and y axes.
         enrichment_path: Path to an enrichment_results.csv from gseapy.enrichr.
         gene_sets: If provided, restrict to rows whose Gene_set is in this list.
         terms: If provided, restrict to rows whose Term is in this list.
         n_cooks: Number of top genes by Cook's distance to label.
-        n_log_ratio: Number of top genes by absolute log percent ratio to label.
-        min_pct: Genes where both percent_counts are below this value are excluded
+        n_log_ratio: Number of top genes by absolute log ratio to label.
+        min_expr: Genes where both normalized_counts are below this value are excluded
             from the log-ratio ranking.
         label_enriched: If True, annotate every gene belonging to any selected term
             with its gene name, in addition to the top Cook's/log-ratio labels.
@@ -853,6 +845,8 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
 
     all_enriched: set[str] = set().union(*per_term_genes.values()) if per_term_genes else set()
 
+    lim = max(max(df['normalized_counts_x'].max(), df['normalized_counts_y'].max())
+              for df in compare_dfs)
     fig, axs = plt.subplots(1, 4, figsize=(25, 5))
 
     for ax, df, pair in zip(axs, compare_dfs, comparisons):
@@ -869,21 +863,21 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
             cat_scatter_genes(ax, df[mask], pair[0], pair[1],
                               color, label=label, xlim=lim, ylim=lim)
             sub = df[mask]
-            n_above = (sub['percent_counts_y'] > sub['percent_counts_x']).sum()
-            n_below = (sub['percent_counts_x'] > sub['percent_counts_y']).sum()
+            n_above = (sub['normalized_counts_y'] > sub['normalized_counts_x']).sum()
+            n_below = (sub['normalized_counts_x'] > sub['normalized_counts_y']).sum()
             n_total = len(sub)
             print(f"  {x_label} vs {y_label} | {term}: "
                   f"{n_below}/{n_total} toward {x_label}, "
                   f"{n_above}/{n_total} toward {y_label}, {_fmt_p(p)}")
 
-        ax.plot([0, 100], [0, 100], color='black', linestyle='--', linewidth=1.5)
-        _label_genes(ax, df, n_cooks, n_log_ratio, min_pct)
+        ax.plot([0, lim], [0, lim], color='black', linestyle='--', linewidth=1.5)
+        _label_genes(ax, df, n_cooks, n_log_ratio, min_expr)
 
         if label_enriched:
             for idx in df[norm_names.isin(all_enriched)].index:
                 row = df.loc[idx]
                 ax.annotate(row['gene_name'],
-                            (row['percent_counts_x'], row['percent_counts_y']),
+                            (row['normalized_counts_x'], row['normalized_counts_y']),
                             fontsize=7, ha='left', va='bottom', clip_on=True)
 
         ax.legend(fontsize=7)
@@ -891,10 +885,10 @@ def compare_by_enrichment(compare_dfs: list[pd.DataFrame], comparisons: list[tup
     plt.tight_layout()
     plt.show()
 
-def compare_by_de(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim: float,
+def compare_by_de(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
                    de_results: pd.DataFrame, de_comparing: tuple[str, str],
                    fdr_thresh: float = 0.05,
-                   n_cooks: int = 10, n_log_ratio: int = 10, min_pct: float = 0.1,
+                   n_cooks: int = 10, n_log_ratio: int = 10, min_expr: float = 0.0,
                    label_de: bool = False) -> None:
     orthologs = _load_orthologs()
     _norm = lambda name: _normalize_gene_name(name, orthologs)
@@ -908,6 +902,8 @@ def compare_by_de(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim
     genes_side1 = set(sig.loc[sig['logFC'] < 0, '_norm'])
     genes_side2 = set(sig.loc[sig['logFC'] > 0, '_norm'])
 
+    lim = max(max(df['normalized_counts_x'].max(), df['normalized_counts_y'].max())
+              for df in compare_dfs)
     fig, axs = plt.subplots(1, 4, figsize=(25, 5))
 
     for ax, df, pair in zip(axs, compare_dfs, comparisons):
@@ -928,22 +924,22 @@ def compare_by_de(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim
             cat_scatter_genes(ax, df[mask], pair[0], pair[1],
                               color, label=label, xlim=lim, ylim=lim)
             sub = df[mask]
-            n_above = (sub['percent_counts_y'] > sub['percent_counts_x']).sum()
-            n_below = (sub['percent_counts_x'] > sub['percent_counts_y']).sum()
+            n_above = (sub['normalized_counts_y'] > sub['normalized_counts_x']).sum()
+            n_below = (sub['normalized_counts_x'] > sub['normalized_counts_y']).sum()
             n_total = len(sub)
             print(f"  {x_label} vs {y_label} | {base_label}: "
                   f"{n_below}/{n_total} toward {x_label}, "
                   f"{n_above}/{n_total} toward {y_label}, {_fmt_p(p)}")
 
-        ax.plot([0, 100], [0, 100], color='black', linestyle='--', linewidth=1.5)
-        _label_genes(ax, df, n_cooks, n_log_ratio, min_pct)
+        ax.plot([0, lim], [0, lim], color='black', linestyle='--', linewidth=1.5)
+        _label_genes(ax, df, n_cooks, n_log_ratio, min_expr)
 
         if label_de:
             all_de = genes_side1 | genes_side2
             for idx in df[norm_names.isin(all_de)].index:
                 row = df.loc[idx]
                 ax.annotate(row['gene_name'],
-                            (row['percent_counts_x'], row['percent_counts_y']),
+                            (row['normalized_counts_x'], row['normalized_counts_y']),
                             fontsize=7, ha='left', va='bottom', clip_on=True)
 
         ax.legend(fontsize=7)
@@ -951,10 +947,10 @@ def compare_by_de(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim
     plt.show()
 
 
-def compare_by_go(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim: float,
+def compare_by_go(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
                    terms: list[str],
                    go_library: str | list[str] | None = None,
-                   n_cooks: int = 10, n_log_ratio: int = 10, min_pct: float = 0.1,
+                   n_cooks: int = 10, n_log_ratio: int = 10, min_expr: float = 0.0,
                    label_genes: bool = False) -> None:
     orthologs = _load_orthologs()
     _norm = lambda name: _normalize_gene_name(name, orthologs)
@@ -978,6 +974,8 @@ def compare_by_go(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim
     cmap = matplotlib.colormaps.get_cmap('tab10')
     colors = [cmap(i % 10) for i in range(len(per_term_genes))]
 
+    lim = max(max(df['normalized_counts_x'].max(), df['normalized_counts_y'].max())
+              for df in compare_dfs)
     fig, axs = plt.subplots(1, 4, figsize=(25, 5))
 
     for ax, df, pair in zip(axs, compare_dfs, comparisons):
@@ -997,22 +995,22 @@ def compare_by_go(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim
             cat_scatter_genes(ax, df[mask], pair[0], pair[1],
                               color, label=label, xlim=lim, ylim=lim)
             sub = df[mask]
-            n_above = (sub['percent_counts_y'] > sub['percent_counts_x']).sum()
-            n_below = (sub['percent_counts_x'] > sub['percent_counts_y']).sum()
+            n_above = (sub['normalized_counts_y'] > sub['normalized_counts_x']).sum()
+            n_below = (sub['normalized_counts_x'] > sub['normalized_counts_y']).sum()
             n_total = len(sub)
             print(f"  {x_label} vs {y_label} | {short_label}: "
                   f"{n_below}/{n_total} toward {x_label}, "
                   f"{n_above}/{n_total} toward {y_label}, {_fmt_p(p)}")
 
-        ax.plot([0, 100], [0, 100], color='black', linestyle='--', linewidth=1.5)
-        _label_genes(ax, df, n_cooks, n_log_ratio, min_pct)
+        ax.plot([0, lim], [0, lim], color='black', linestyle='--', linewidth=1.5)
+        _label_genes(ax, df, n_cooks, n_log_ratio, min_expr)
 
         if label_genes:
             all_norm = {_norm(g) for g in all_term_genes}
             for idx in df[norm_names.isin(all_norm)].index:
                 row = df.loc[idx]
                 ax.annotate(row['gene_name'],
-                            (row['percent_counts_x'], row['percent_counts_y']),
+                            (row['normalized_counts_x'], row['normalized_counts_y']),
                             fontsize=7, ha='left', va='bottom', clip_on=True)
 
         ax.legend(fontsize=7)
@@ -1021,26 +1019,24 @@ def compare_by_go(compare_dfs: list[pd.DataFrame], comparisons: list[tuple], lim
 
 
 def compare(datasets: list[ad.AnnData],
-            lim: float,
-            comparison_axis: str = "percent_counts",
-            n_cooks: int = 5, 
-            n_log_ratio: int = 10, 
-            min_pct: float = 0.1
+            comparison_axis: str = "normalized_counts",
+            n_cooks: int = 5,
+            n_log_ratio: int = 10,
+            min_expr: float = 0.0,
 ) -> tuple[list[str], list[pd.DataFrame]]:
     """Generate all pairwise gene-count comparison plots across four sequencing methods.
 
-    Filters each dataset to genes with percent_counts below lim, then computes
-    compare_genes for every pair and renders density, Cook's, length, GC, and
-    biotype comparison plots.
+    Computes compare_genes for every pair and renders density, Cook's, length, GC,
+    and biotype comparison plots. Axis limits are determined automatically from the data.
 
     Comparison pairs: polyT vs randO, 10X vs polyT, 10X vs randO, 10X vs Parse.
 
     Args:
         datasets: List of four AnnData objects in order [10X, polyT, randO, Parse].
-        lim: Maximum percent_counts value; genes above this threshold are excluded.
+        comparison_axis: var column to compare (default: 'normalized_counts').
         n_cooks: Number of top genes by Cook's distance to label on each plot.
-        n_log_ratio: Number of top genes by absolute log percent ratio to label on each plot.
-        min_pct: Genes where both percent_counts are below this value are excluded
+        n_log_ratio: Number of top genes by absolute log ratio to label on each plot.
+        min_expr: Genes where both normalized_counts are below this value are excluded
             from the log-ratio ranking.
 
     Returns:
@@ -1064,14 +1060,14 @@ def compare(datasets: list[ad.AnnData],
 
     compare_dfs = []
     for pair in comparisons:
-        compare_dfs.append(processing.compare_genes(pair[0], pair[1], lim, comparison_axis))
+        compare_dfs.append(processing.compare_genes(pair[0], pair[1], comparison_axis))
 
-    compare_by_density(compare_dfs, comparisons, lim, n_cooks, n_log_ratio, min_pct)
-    compare_by_cooks(compare_dfs, comparisons, lim, n_cooks, n_log_ratio, min_pct)
-    compare_by_length(compare_dfs, comparisons, lim, n_cooks, n_log_ratio, min_pct)
-    compare_by_gc(compare_dfs, comparisons, lim, n_cooks, n_log_ratio, min_pct)
-    compare_by_type(compare_dfs, comparisons, lim, n_cooks, n_log_ratio, min_pct)
-    compare_by_pathway(compare_dfs, comparisons, lim, n_cooks, n_log_ratio, min_pct)
+    compare_by_density(compare_dfs, comparisons, n_cooks, n_log_ratio, min_expr)
+    compare_by_cooks(compare_dfs, comparisons, n_cooks, n_log_ratio, min_expr)
+    compare_by_length(compare_dfs, comparisons, n_cooks, n_log_ratio, min_expr)
+    compare_by_gc(compare_dfs, comparisons, n_cooks, n_log_ratio, min_expr)
+    compare_by_type(compare_dfs, comparisons, n_cooks, n_log_ratio, min_expr)
+    compare_by_pathway(compare_dfs, comparisons, n_cooks, n_log_ratio, min_expr)
 
     return compare_names, compare_dfs
 

@@ -18,9 +18,15 @@ dependencies = [
     "pybiomart",
     "scipy",
     "upsetty",
-    "openpyxl"
+    "openpyxl",
+    "gseapy",
+    "statsmodels",
+    "networkx"
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["XvP_utils*"]
+
+[tool.setuptools.package-data]
+"XvP_utils.plotting" = ["*.R", "*.csv"]

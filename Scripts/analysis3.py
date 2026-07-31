@@ -29,6 +29,7 @@ def genebody_plots(settings: RunSettings, config_file: str, logger: Logger) -> N
         config_file=config_file,
         tenx_assay = "10x_H1",
         parse_assay = "parse_H1",
+        tag = "H1",
         logger = logger
     )
 
@@ -37,6 +38,7 @@ def genebody_plots(settings: RunSettings, config_file: str, logger: Logger) -> N
         config_file=config_file,
         tenx_assay = "10x_H2",
         parse_assay = "parse_H2",
+        tag = "H2",
         logger = logger
     )
 
@@ -45,8 +47,8 @@ if __name__ == "__main__":
     settings = RunSettings(
         root_dir=Path(__file__).parent.parent,
         config_name="analysis3.yaml",
-        overwrite=False,
-        run_kb=True,
+        overwrite=True,
+        run_kb=False,
         threads=16,
         max_workers=4
     )
@@ -55,12 +57,12 @@ if __name__ == "__main__":
     os.makedirs(settings.root_dir / "Logs", exist_ok=True)
     logger = setup_logger(settings.root_dir / "Logs" / "analysis3.txt")
 
-    load_all(settings, config_file, logger)
-    subsample_num = get_subsample_num(
-        settings, config_file,
-        ten_x_assays=["10x_H1", "10x_H2"],
-        parse_assays=["parse_H1", "parse_H2"],
-        logger=logger,
-    )
-    subsample_all(settings, config_file, subsample_num, logger)
+    # load_all(settings, config_file, logger)
+    # subsample_num = get_subsample_num(
+    #     settings, config_file,
+    #     ten_x_assays=["10x_H1", "10x_H2"],
+    #     parse_assays=["parse_H1", "parse_H2"],
+    #     logger=logger,
+    # )
+    # subsample_all(settings, config_file, subsample_num, logger)
     genebody_plots(settings, config_file, logger)

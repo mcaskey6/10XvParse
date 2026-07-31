@@ -1,0 +1,9 @@
+AAAA	sub1
+AAAC	sub2
+AAAG	sub3
+AAAT	sub4
+AACA	sub5
+AACC	sub6
+AACG	sub7
+AACT	sub8
+AAGA	sub9
