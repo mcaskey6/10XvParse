@@ -689,8 +689,15 @@ def run_star_10x(
     Optional tag prefix for analyses with multiple dataset combinations.'''
 
     if tag:
+        # A depth-tagged subsample (Sampled_<tag>/) exists only when the same 10x assay is
+        # subsampled at multiple depths (e.g. Analysis 2's standard/mini). When comparisons
+        # are separated by assay instead (e.g. Analysis 3's H1/H2), the tag is only an output
+        # label and the subsample lives in the assay's default Sampled/ dir — fall back to it.
         sampled_dir = paths.fasta_dir / f"Sampled_{tag}"
         sampled_files = [sampled_dir / f"{assay}_{i}.fastq.gz" for i in range(2)]
+        if not all(p.is_file() for p in sampled_files):
+            logger.info("No Sampled_%s for %s; using default subsampled files", tag, assay)
+            sampled_files = paths.sampled_files
         outfile_prefix = str(paths.star_dir / tag) + "/10x_"
     else:
         sampled_files = paths.sampled_files

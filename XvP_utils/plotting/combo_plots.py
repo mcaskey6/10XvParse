@@ -928,8 +928,8 @@ def compare_by_de(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
             n_below = (sub['normalized_counts_x'] > sub['normalized_counts_y']).sum()
             n_total = len(sub)
             print(f"  {x_label} vs {y_label} | {base_label}: "
-                  f"{n_below}/{n_total} toward {x_label}, "
-                  f"{n_above}/{n_total} toward {y_label}, {_fmt_p(p)}")
+                  f"{n_below}/{n_total} ({(n_below/n_total*100):.2f}%) toward {x_label}, "
+                  f"{n_above}/{n_total} ({(n_above/n_total*100):.2f}%) toward {y_label}, {_fmt_p(p)}")
 
         ax.plot([0, lim], [0, lim], color='black', linestyle='--', linewidth=1.5)
         _label_genes(ax, df, n_cooks, n_log_ratio, min_expr)
@@ -999,8 +999,8 @@ def compare_by_go(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
             n_below = (sub['normalized_counts_x'] > sub['normalized_counts_y']).sum()
             n_total = len(sub)
             print(f"  {x_label} vs {y_label} | {short_label}: "
-                  f"{n_below}/{n_total} toward {x_label}, "
-                  f"{n_above}/{n_total} toward {y_label}, {_fmt_p(p)}")
+                  f"{n_below}/{n_total} ({(n_below/n_total*100):.2f}%) toward {x_label}, "
+                  f"{n_above}/{n_total} ({(n_above/n_total*100):.2f}%) toward {y_label}, {_fmt_p(p)}")
 
         ax.plot([0, lim], [0, lim], color='black', linestyle='--', linewidth=1.5)
         _label_genes(ax, df, n_cooks, n_log_ratio, min_expr)

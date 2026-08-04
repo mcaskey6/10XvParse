@@ -48,7 +48,7 @@ if __name__ == "__main__":
         root_dir=Path(__file__).parent.parent,
         config_name="analysis3.yaml",
         overwrite=True,
-        run_kb=False,
+        run_kb=True,
         threads=16,
         max_workers=4
     )
