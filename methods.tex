@@ -192,6 +192,14 @@ between-technology difference, and a Gaussian kernel density estimate was used t
 colour points by local density. Outlier genes were summarised by biotype, gene
 length, GC content, and gene-name prefix.
 
+Per-gene expression was also summarised as log-counts-per-million (log-CPM): for each gene $g$,
+$\ln\!\bigl(\mathrm{CPM}_g + 1\bigr)$ where $\mathrm{CPM}_g = \bigl(\sum_{\text{cells}} \mathrm{UMI}_g\bigr) \big/ \bigl(\sum_{\text{all}} \mathrm{UMI}\bigr) \times 10^6$.
+Log-CPM vectors from the two technologies were aligned on shared gene symbols (genes absent from one assay assigned a value of zero), and three correlation statistics were computed: Pearson's $r$, Spearman's $\rho$, and Lin's concordance correlation coefficient~\cite{lin1989ccc}
+\begin{equation*}
+\rho_c = \frac{2\,r\,\sigma_x\,\sigma_y}{\sigma_x^2 + \sigma_y^2 + (\mu_x - \mu_y)^2}
+\end{equation*}
+where $r$ is the Pearson correlation and $\sigma$, $\mu$ denote the standard deviation and mean of each log-CPM vector. The CCC measures both correlation and agreement along the line of perfect concordance ($y = x$), penalising systematic differences in level or scale that $r$ alone would not detect.
+
 \subsection{Cross-study differential composition and functional enrichment}
 
 To identify genes that were consistently over- or under-represented by one technology
