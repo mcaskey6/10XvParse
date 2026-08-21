@@ -68,17 +68,25 @@ def sublibrary_labels(cfg: dict, assay: str) -> list[str]:
 def accessions_for(cfg: dict, assay: str) -> tuple[str, list[str], list[str]]:
     """Return ``(source, accessions, sublibraries)`` for an assay.
 
-    ``source`` is ``"SRA"``, ``"ERA"``, or ``"local"`` when neither is present
-    (pre-downloaded files). Mirrors how ``AnalysisConfig.from_yaml`` reads the
-    ``SRA``/``ERA`` blocks.
+    ``source`` is ``"SRA"`` or ``"ERA"`` (accession downloads; a flat list or a
+    ``{sublibrary: [accessions]}`` mapping), else ``"local"`` (pre-downloaded reads
+    listed in the ``local:`` block — read those via ``local_libraries``, not this).
     """
-    sra, sra_subs = flatten_accessions(cfg.get("SRA", {}).get(assay, []))
-    if sra:
-        return "SRA", sra, sra_subs
-    era, era_subs = flatten_accessions(cfg.get("ERA", {}).get(assay, []))
-    if era:
-        return "ERA", era, era_subs
+    for source in ("SRA", "ERA"):
+        names, subs = flatten_accessions(cfg.get(source, {}).get(assay, []))
+        if names:
+            return source, names, subs
     return "local", [], []
+
+
+def local_libraries(cfg: dict, assay: str) -> list[tuple[str, str, str]]:
+    """``[(name, r1_file, r2_file)]`` for a local-source assay, from the ``local:``
+    block: per assay a list of ``[R1, R2]`` filename pairs (R1/R2 in the assay's read
+    order), one per sublibrary in barcode-assignment order, named ``Lib{i}``. The
+    filenames are used as-is (relative to the assay's Dumped dir), so arbitrary
+    Illumina names work without renaming."""
+    entries = cfg.get("local", {}).get(assay, [])
+    return [(f"Lib{i}", r1, r2) for i, (r1, r2) in enumerate(entries)]
 
 
 # --------------------------------------------------------------------------- #
@@ -173,6 +181,13 @@ def is_barnyard(cfg: dict) -> bool:
     return "_" in species(cfg)
 
 
+def assay_bclen(cfg: dict, assay: str):
+    """The splitcode ``--bclen`` for an assay: the sublibrary-barcode length for
+    Parse (which always remultiplexes with a 4th-round barcode), else ``None`` (10x
+    and hashtag libraries carry no sublibrary barcode)."""
+    return LIB_BC_LEN if assay_type(cfg, assay) == "parse" else None
+
+
 # --------------------------------------------------------------------------- #
 # comparison groups (moved out of the old Scripts/analysisN.py)
 # --------------------------------------------------------------------------- #
@@ -196,6 +211,35 @@ def group_by_tag(cfg: dict, tag: str) -> dict:
 
 
 def stag_token(tag: str) -> str:
-    """A comparison tag -> the path token used across its sampled outputs:
-    ``""`` for the untagged group, ``"_<tag>"`` otherwise (Analysis 2)."""
+    """A comparison tag -> a path token: ``""`` for the untagged group,
+    ``"_<tag>"`` otherwise. Used on an output path only via ``output_stag``."""
     return f"_{tag}" if tag else ""
+
+
+def assay_multiplicity(cfg: dict) -> dict:
+    """{assay: how many comparison groups it appears in}. >1 only when the same
+    assay is subsampled at more than one depth (e.g. Analysis 2's shared 10x)."""
+    counts: dict = {}
+    for comp in comparisons(cfg):
+        for a in comp.get("tenx", []) + comp.get("parse", []):
+            counts[a] = counts.get(a, 0) + 1
+    return counts
+
+
+def output_stag(cfg: dict, assay: str, tag: str) -> str:
+    """Depth token to put on a subsample OUTPUT path: the group tag only when this
+    assay is subsampled in more than one group (else ``""``). So single-subsampled
+    assays (all of Analysis 3–7) stay untagged and only a doubly-subsampled assay
+    (Analysis 2's 10x) is tagged to keep its two depths from colliding."""
+    return stag_token(tag) if assay_multiplicity(cfg).get(assay, 0) > 1 else ""
+
+
+def subsample_group(cfg: dict, assay: str, out_stag: str) -> dict:
+    """The comparison group a subsample job belongs to. A tagged output names its
+    group by tag; an untagged output's assay belongs to exactly one group."""
+    if out_stag:
+        return group_by_tag(cfg, out_stag[1:])
+    for comp in comparisons(cfg):
+        if assay in comp.get("tenx", []) or assay in comp.get("parse", []):
+            return comp
+    return {}

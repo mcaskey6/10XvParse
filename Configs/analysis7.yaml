@@ -1,5 +1,19 @@
 name: Analysis_7
 
+# Pre-downloaded local reads (no SRA/ERA download). Each assay lists its libraries
+# as [R1_file, R2_file] pairs (R1/R2 in the assay's read order); the files live in
+# that assay's FASTA/Dumped dir and are used by name, so any filenames work (e.g.
+# Illumina *_R1_001.fastq.gz) with no renaming. Each pair is one Parse sublibrary,
+# in the order listed (barcode-assignment order).
+local:
+ 10x:
+ - [Lib0_1.fastq.gz, Lib0_2.fastq.gz]
+ 10x_hashtags:
+ - [Lib0_1.fastq.gz, Lib0_2.fastq.gz]
+ parse:
+ - [Lib0_1.fastq.gz, Lib0_2.fastq.gz]
+ - [Lib1_1.fastq.gz, Lib1_2.fastq.gz]
+
 # The suffix for the R1 and R2 FASTA files dumped from fasterq-dump. For some reason these change across datasets
 read_num:
   10x:

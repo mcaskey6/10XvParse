@@ -65,11 +65,14 @@ tech:
  parse_H1: WT_v2
  parse_H2: WT_v2
 
-# Subsample comparison groups (moved out of the old Scripts/analysis3.py).
-# All four assays are subsampled to a single shared minimum read count
-# (analysis3.py called get_subsample_num over all of them at once), so they
-# form one untagged group.
+# Subsample comparison groups. H1 and H2 are subsampled independently — each
+# 10x-vs-Parse pair to its own shared minimum — since nothing downstream compares
+# H1 against H2 at equal depth (this preserves more reads than the old single
+# global minimum). The tag also labels the pair for the gene-body comparison.
 comparisons:
- - tag: ""
-   tenx: [10x_H1, 10x_H2]
-   parse: [parse_H1, parse_H2]
+ - tag: H1
+   tenx: [10x_H1]
+   parse: [parse_H1]
+ - tag: H2
+   tenx: [10x_H2]
+   parse: [parse_H2]

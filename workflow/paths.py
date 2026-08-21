@@ -317,7 +317,9 @@ def parse_randOpolyT_keep_file(analysis: str, assay: str) -> str:
 # cross-assay subsample read-count coupling
 # --------------------------------------------------------------------------- #
 
-def subsample_num_file(analysis: str, stag: str = "") -> str:
-    """Holds the minimum read count for one comparison group. ``stag`` is the
-    group's depth token (``""`` or ``"_<tag>"``)."""
-    return f"Data/{analysis}/subsample_num{stag}.txt"
+def read_counts_file(analysis: str) -> str:
+    """One file per analysis holding a ``<fastq> <read_count>`` line for each
+    first-read processed FASTQ. Subsample jobs compute their group's minimum on
+    the fly from the relevant lines (matches the old read_counts cache); the file
+    is group-agnostic, so changing comparison groups doesn't invalidate it."""
+    return f"Data/{analysis}/read_counts.txt"
