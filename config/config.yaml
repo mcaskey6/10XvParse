@@ -1,0 +1,16 @@
+# Top-level Snakemake config for the 10XvParse workflow.
+# Loaded via `configfile:` in workflow/Snakefile (alongside config/indexes.yaml).
+
+# Default thread count for multi-threaded rules (override on the CLI with
+# --set-threads or by editing here). Actual parallelism is set with `--cores`.
+threads: 16
+
+# Analyses to build: analysis name (used in Data/<name>/...) -> its config file.
+# Add more entries here as each analysis is ported to the workflow.
+analyses:
+  Analysis_2: Configs/analysis2.yaml
+  Analysis_3: Configs/analysis3.yaml
+  Analysis_4: Configs/analysis4.yaml
+  Analysis_5: Configs/analysis5.yaml
+  Analysis_6: Configs/analysis6.yaml
+  Analysis_7: Configs/analysis7.yaml

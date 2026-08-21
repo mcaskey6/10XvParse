@@ -1,0 +1,631 @@
+# 10XvParse preprocessing workflow.
+#
+# Replaces the hand-rolled Scripts/analysisN.py + XvP_utils/preprocessing/pipelines.py
+# orchestration. Steps that are a single command are `shell:` rules; the two
+# genuinely-Python steps (Parse config generation, splitcode batch file) are
+# `script:` rules. Paths come from workflow/paths.py, config parsing from
+# workflow/config_helpers.py, and the config from config/{config,indexes}.yaml.
+#
+# Phase 1 covers Analysis 5 (single 10x vs single Parse, human/SRA, one subsample
+# depth). Tags, hashtags, H1/H2, barnyard and ERA/local sources come later.
+
+import os
+import re
+import sys
+
+import yaml
+
+sys.path.insert(0, workflow.basedir)  # make paths.py / config_helpers.py importable
+import paths
+import config_helpers as ch
+
+
+configfile: "config/config.yaml"
+configfile: "config/indexes.yaml"
+
+THREADS = config.get("threads", 8)
+INDEXES = config["indexes"]
+
+# Load each analysis's config (Configs/analysisN.yaml) keyed by analysis name.
+ANALYSES = {}
+for _name, _cfg_path in config["analyses"].items():
+    with open(_cfg_path) as _f:
+        ANALYSES[_name] = yaml.safe_load(_f)
+
+
+def _assays(cfg):
+    return [a for a in cfg["tech"] if a != "wells"]
+
+
+def _assays_of_type(kind):
+    return sorted({a for cfg in ANALYSES.values() for a in _assays(cfg)
+                   if ch.assay_type(cfg, a) == kind})
+
+
+ALL_ASSAYS = sorted({a for cfg in ANALYSES.values() for a in _assays(cfg)})
+TENX_ASSAYS = _assays_of_type("tenx")
+PARSE_ASSAYS = _assays_of_type("parse")
+HASHTAG_ASSAYS = _assays_of_type("hashtags")
+# Both 10x and hashtag libraries multiplex the same way (splitcode --no-outb, no
+# sublibrary barcode); only the pseudoalignment differs.
+NOBC_ASSAYS = sorted(set(TENX_ASSAYS) | set(HASHTAG_ASSAYS))
+
+
+def _re(assays):
+    return "|".join(map(re.escape, assays)) or "^$"
+
+
+TENX_RE = _re(TENX_ASSAYS)
+PARSE_RE = _re(PARSE_ASSAYS)
+HASHTAG_RE = _re(HASHTAG_ASSAYS)
+NOBC_RE = _re(NOBC_ASSAYS)
+
+# Species split single-species (curl the pair) vs barnyard (build a combined,
+# species-prefixed reference). Keyed off config/indexes.yaml's `barnyard:` flag.
+BARNYARD_SPECIES = sorted(sp for sp, v in INDEXES.items() if v.get("barnyard"))
+SINGLE_SPECIES = sorted(sp for sp in INDEXES if sp not in BARNYARD_SPECIES)
+BARNYARD_RE = "|".join(map(re.escape, BARNYARD_SPECIES)) or "^$"
+SINGLE_RE = "|".join(map(re.escape, SINGLE_SPECIES)) or "^$"
+
+
+wildcard_constraints:
+    analysis=r"Analysis_\d+",
+    assay="|".join(map(re.escape, ALL_ASSAYS)) or r"[A-Za-z0-9_]+",
+    srr=r"[A-Z]{3}\d+",
+    species=r"[a-z_]+",
+    kind="polyT|randO",  # the only barcode-split subsample kinds
+    read=r"[01]",
+    stag=r"(_[A-Za-z0-9]+)?",  # subsample depth token: "" or "_<comparison tag>"
+
+
+# --------------------------------------------------------------------------- #
+# helpers over the loaded config
+# --------------------------------------------------------------------------- #
+
+def A(wc):
+    return ANALYSES[wc.analysis]
+
+
+def SP(wc):
+    return ch.species(A(wc))
+
+
+def dump_read_nums(wc):
+    """(R1, R2) fasterq-dump suffixes for this accession, honouring any
+    per-sublibrary override; the assay default otherwise."""
+    cfg = A(wc)
+    _src, accs, subs = ch.accessions_for(cfg, wc.assay)
+    idx = accs.index(wc.srr)
+    if idx < len(subs):
+        return ch.read_nums_for(cfg, wc.assay, subs[idx])
+    return ch.default_read_nums(cfg, wc.assay)
+
+
+def local_libraries(wc):
+    """(name, r1, r2) per pre-downloaded local library for a source-less assay.
+
+    Mirrors io.build_local_libraries: scan the dumped dir for Lib0, Lib1, ... (each
+    its own sublibrary) until ``Lib{i}_{r1num}.fastq.gz`` is missing. R1/R2 suffixes
+    come from read_num (honouring any per-library override, as the old code did)."""
+    cfg = A(wc)
+    d = paths.dumped_dir(wc.analysis, wc.assay)
+    rows = []
+    i = 0
+    while True:
+        name = f"Lib{i}"
+        r1n, r2n = ch.read_nums_for(cfg, wc.assay, name)
+        r1 = f"{d}/{name}_{r1n}.fastq.gz"
+        if not os.path.exists(r1):
+            break
+        rows.append((name, r1, f"{d}/{name}_{r2n}.fastq.gz"))
+        i += 1
+    return rows
+
+
+def library_rows(wc):
+    """(name, r1, r2) per library for an assay, source-aware. For SRA/ERA the reads
+    are the accession-named dumped FASTQs (produced by dump/download_era); for a
+    local (source-less) assay they are the pre-existing Lib{i} files."""
+    cfg = A(wc)
+    src, accs, subs = ch.accessions_for(cfg, wc.assay)
+    if src == "local":
+        return local_libraries(wc)
+    labels = subs if subs else list(accs)
+    return [
+        (labels[i],
+         paths.dumped_fastq(wc.analysis, wc.assay, acc, "R1"),
+         paths.dumped_fastq(wc.analysis, wc.assay, acc, "R2"))
+        for i, acc in enumerate(accs)
+    ]
+
+
+def dumped_fastqs(wc):
+    """All per-library FASTQs for an assay, aggregated for multiplexing."""
+    return [f for _name, r1, r2 in library_rows(wc) for f in (r1, r2)]
+
+
+def assay_sublibraries(wc):
+    """Sublibrary label per library, in batch order — source-aware (the Lib{i} names
+    for a local assay, else the config's sublibraries/accessions)."""
+    return [name for name, _r1, _r2 in library_rows(wc)]
+
+
+def kb_index_input(wc):
+    """The kb (kallisto) index files, keyed by this analysis's species."""
+    s = SP(wc)
+    return {
+        "index": paths.index_file(s),
+        "t2g": paths.t2g_file(s),
+        "cdna": paths.cdna_file(s),
+        "nascent": paths.nascent_file(s),
+    }
+
+
+def main_subsample_source(wc):
+    """The one full-depth read file feeding a main subsample job: the 10x
+    multiplexed FASTQ for a tenx assay, the barcode-filtered FASTQ for parse."""
+    r = int(wc.read)
+    if ch.assay_type(A(wc), wc.assay) == "tenx":
+        return paths.tenx_multiplexed(wc.analysis, wc.assay)[r]
+    return paths.parse_filtered(wc.analysis, wc.assay)[r]
+
+
+def tenx_kb_fastqs(wc):
+    """Input FASTQs for a tenx kb count, chosen by the output leaf. A sampled leaf
+    is ``sampled_10x{stag}_out``; the depth token selects the ``Sampled{stag}`` dir."""
+    if wc.leaf == "10x_out":
+        return paths.tenx_multiplexed(wc.analysis, wc.assay)
+    _sub, stag = paths.parse_sampled_leaf(wc.leaf)
+    return paths.sampled_fastqs(wc.analysis, wc.assay, stag)
+
+
+def parse_kb_fastqs(wc):
+    """Input FASTQs for a parse kb count, chosen by the output leaf. Sampled leaves
+    are ``sampled_{parse|polyT|randO}{stag}_out``: the read subset (empty -> the
+    assay-named main FASTQ) and depth token come from ``paths.parse_sampled_leaf``."""
+    if wc.leaf == "parse_out":
+        return paths.parse_filtered(wc.analysis, wc.assay)
+    sub, stag = paths.parse_sampled_leaf(wc.leaf)
+    kind = "" if sub == "parse" else sub
+    return paths.sampled_fastqs(wc.analysis, wc.assay, stag, kind)
+
+
+def hashtags_kb_fastqs(wc):
+    """R1 + R2 for a kite kb count. R2 is trimmed to the feature-barcode length
+    when the config sets a trim for this assay, otherwise the multiplexed R2."""
+    r1 = paths.tenx_multiplexed(wc.analysis, wc.assay)[0]
+    if ch.r2_trim_length(A(wc), wc.assay) is not None:
+        r2 = paths.hashtags_trimmed_r2(wc.analysis, wc.assay)
+    else:
+        r2 = paths.tenx_multiplexed(wc.analysis, wc.assay)[1]
+    return [r1, r2]
+
+
+def subsample_num_inputs(wc):
+    """First (full-depth) processed FASTQ of every assay in the comparison group
+    named by this depth token — the files whose minimum read count sets the depth.
+    ``wc.stag`` is "" (untagged group) or "_<tag>"; strip the underscore to the tag."""
+    cfg = A(wc)
+    comp = ch.group_by_tag(cfg, wc.stag[1:] if wc.stag else "")
+    files = []
+    for assay in comp.get("tenx", []):
+        files.append(paths.tenx_multiplexed(wc.analysis, assay)[0])
+    for assay in comp.get("parse", []):
+        files.append(paths.parse_filtered(wc.analysis, assay)[0])
+        files.append(paths.parse_split(wc.analysis, assay, "polyT")[0])
+        files.append(paths.parse_split(wc.analysis, assay, "randO")[0])
+    return files
+
+
+# --------------------------------------------------------------------------- #
+# targets
+# --------------------------------------------------------------------------- #
+
+def all_targets():
+    targets = []
+    for name, cfg in ANALYSES.items():
+        for assay in _assays(cfg):
+            t = ch.assay_type(cfg, assay)
+            if t == "tenx":
+                targets.append(paths.kb_h5ad(name, assay, "10x_out"))
+            elif t == "parse":
+                targets.append(paths.kb_h5ad(name, assay, "parse_out"))
+            elif t == "hashtags":
+                targets.append(paths.kb_h5ad(name, assay, "10x_hashtags_out"))
+        for comp in ch.comparisons(cfg):
+            stag = ch.stag_token(comp.get("tag", ""))
+            for assay in comp.get("tenx", []):
+                targets.append(paths.kb_h5ad(name, assay, paths.sampled_leaf("10x", stag)))
+            for assay in comp.get("parse", []):
+                for k in ("parse", "polyT", "randO"):
+                    targets.append(paths.kb_h5ad(name, assay, paths.sampled_leaf(k, stag)))
+    return targets
+
+
+rule all:
+    input:
+        all_targets()
+
+
+# --------------------------------------------------------------------------- #
+# reference + kb index (per species)
+# --------------------------------------------------------------------------- #
+
+rule download_reference:
+    wildcard_constraints:
+        species=SINGLE_RE,
+    output:
+        fa=paths.genome_file("{species}"),
+        gtf=paths.gtf_file("{species}"),
+    params:
+        fasta_url=lambda wc: INDEXES[wc.species]["fasta"],
+        gtf_url=lambda wc: INDEXES[wc.species]["gtf"],
+    shell:
+        "curl -L -f -o {output.fa} {params.fasta_url} && "
+        "curl -L -f -o {output.gtf} {params.gtf_url}"
+
+
+rule barnyard_reference:
+    # Dual-species reference: prefix every sequence ID (FASTA) and the seqname
+    # column + gene_id/gene_name attributes (GTF) with the uppercased species
+    # label, then concatenate. Shell port of utils.make_barnyard_reference.
+    wildcard_constraints:
+        species=BARNYARD_RE,
+    output:
+        fa=paths.genome_file("{species}"),
+        gtf=paths.gtf_file("{species}"),
+    params:
+        fasta_url=lambda wc: INDEXES[wc.species]["fasta"],
+        gtf_url=lambda wc: INDEXES[wc.species]["gtf"],
+        fasta_url_2=lambda wc: INDEXES[wc.species]["fasta_2"],
+        gtf_url_2=lambda wc: INDEXES[wc.species]["gtf_2"],
+        p1=lambda wc: wc.species.split("_", 1)[0].upper(),
+        p2=lambda wc: wc.species.split("_", 1)[1].upper(),
+        tmp=lambda wc: f"{paths.index_dir(wc.species)}/tmp",
+    shell:
+        r"""
+        mkdir -p {params.tmp}
+        curl -L -f -o {params.tmp}/sp1.fa.gz {params.fasta_url}
+        curl -L -f -o {params.tmp}/sp1.gtf.gz {params.gtf_url}
+        curl -L -f -o {params.tmp}/sp2.fa.gz {params.fasta_url_2}
+        curl -L -f -o {params.tmp}/sp2.gtf.gz {params.gtf_url_2}
+        ( zcat {params.tmp}/sp1.fa.gz | sed 's/^>/>{params.p1}_/' ; \
+          zcat {params.tmp}/sp2.fa.gz | sed 's/^>/>{params.p2}_/' ) | gzip > {output.fa}
+        ( zcat {params.tmp}/sp1.gtf.gz | sed -E '/^#/!{{ s/^/{params.p1}_/; s/(gene_id ")/\1{params.p1}_/; s/(gene_name ")/\1{params.p1}_/ }}' ; \
+          zcat {params.tmp}/sp2.gtf.gz | sed -E '/^#/!{{ s/^/{params.p2}_/; s/(gene_id ")/\1{params.p2}_/; s/(gene_name ")/\1{params.p2}_/ }}' ) | gzip > {output.gtf}
+        rm -f {params.tmp}/sp1.fa.gz {params.tmp}/sp1.gtf.gz {params.tmp}/sp2.fa.gz {params.tmp}/sp2.gtf.gz
+        """
+
+
+rule kb_ref:
+    input:
+        fa=paths.genome_file("{species}"),
+        gtf=paths.gtf_file("{species}"),
+    output:
+        index=paths.index_file("{species}"),
+        t2g=paths.t2g_file("{species}"),
+        cdna=paths.cdna_file("{species}"),
+        nascent=paths.nascent_file("{species}"),
+        cdna_fa=paths.cdna_fasta_file("{species}"),
+        nascent_fa=paths.nascent_fasta_file("{species}"),
+    shell:
+        "kb ref --workflow nac -i {output.index} -g {output.t2g} "
+        "-c1 {output.cdna} -c2 {output.nascent} "
+        "-f1 {output.cdna_fa} -f2 {output.nascent_fa} "
+        "{input.fa} {input.gtf}"
+
+
+# --------------------------------------------------------------------------- #
+# download -> dump -> multiplex (per accession, then aggregated)
+# --------------------------------------------------------------------------- #
+
+# SRA (SRR/DRR accessions): prefetch -> fasterq-dump. ENA (ERR) uses download_era
+# below instead; the accession prefix selects the source.
+rule prefetch:
+    wildcard_constraints:
+        srr=r"[DS]RR\d+",
+    output:
+        sra=paths.sra_file("{analysis}", "{assay}", "{srr}"),
+    params:
+        outdir=lambda wc: paths.sra_dir(wc.analysis, wc.assay),
+    shell:
+        "prefetch {wildcards.srr} --max-size u -O {params.outdir}"
+
+
+rule dump:
+    wildcard_constraints:
+        srr=r"[DS]RR\d+",
+    input:
+        sra=paths.sra_file("{analysis}", "{assay}", "{srr}"),
+    output:
+        r1=paths.dumped_fastq("{analysis}", "{assay}", "{srr}", "R1"),
+        r2=paths.dumped_fastq("{analysis}", "{assay}", "{srr}", "R2"),
+    params:
+        dumped=lambda wc: paths.dumped_dir(wc.analysis, wc.assay),
+        tmp=lambda wc: paths.tmp_dir(wc.analysis, wc.assay),
+        r1n=lambda wc: dump_read_nums(wc)[0],
+        r2n=lambda wc: dump_read_nums(wc)[1],
+    threads: THREADS
+    shell:
+        "mkdir -p {params.tmp} && "
+        "fasterq-dump --outdir {params.dumped} --temp {params.tmp} "
+        "--outfile {wildcards.srr}.fasta --split-files --skip-technical -f "
+        "{input.sra} --threads {threads} --fasta-unsorted && "
+        "pigz -c -p {threads} {params.dumped}/{wildcards.srr}_{params.r1n}.fasta > {output.r1} && "
+        "pigz -c -p {threads} {params.dumped}/{wildcards.srr}_{params.r2n}.fasta > {output.r2} && "
+        "rm -f {params.dumped}/{wildcards.srr}_*.fasta"
+
+
+rule download_era:
+    # ENA (ERR accessions): the paired FASTQs are hosted directly on the ENA FTP,
+    # so no prefetch/dump — curl each read to the same dumped-FASTQ names the SRA
+    # path uses, honouring per-sublibrary read-number overrides.
+    wildcard_constraints:
+        srr=r"ERR\d+",
+    output:
+        r1=paths.dumped_fastq("{analysis}", "{assay}", "{srr}", "R1"),
+        r2=paths.dumped_fastq("{analysis}", "{assay}", "{srr}", "R2"),
+    params:
+        url1=lambda wc: ch.era_ftp_url(wc.srr, dump_read_nums(wc)[0]),
+        url2=lambda wc: ch.era_ftp_url(wc.srr, dump_read_nums(wc)[1]),
+    shell:
+        "curl -L -f -o {output.r1} {params.url1} && "
+        "curl -L -f -o {output.r2} {params.url2}"
+
+
+rule write_batch:
+    output:
+        batch=paths.batch_file("{analysis}", "{assay}"),
+    params:
+        rows=library_rows,
+        # Parse remultiplexes with a sublibrary barcode; 10x does not.
+        bclen=lambda wc: ch.LIB_BC_LEN if ch.assay_type(A(wc), wc.assay) == "parse" else None,
+    script:
+        "scripts/write_batch.py"
+
+
+rule multiplex_tenx:
+    # 10x and hashtag libraries both multiplex without a sublibrary barcode.
+    wildcard_constraints:
+        assay=NOBC_RE,
+    input:
+        batch=paths.batch_file("{analysis}", "{assay}"),
+        fastqs=dumped_fastqs,
+    output:
+        paths.tenx_multiplexed("{analysis}", "{assay}"),
+    threads: THREADS
+    shell:
+        "splitcode --remultiplex --nFastqs=2 --gzip "
+        "-o {output[0]},{output[1]} --no-outb {input.batch} -t {threads}"
+
+
+rule multiplex_parse:
+    # Parse prepends a per-sublibrary barcode (--bclen): splitcode embeds it in the
+    # first output, so batch read-order and outputs are both swapped (matching
+    # utils.multiplex_fastqs).
+    wildcard_constraints:
+        assay=PARSE_RE,
+    input:
+        batch=paths.batch_file("{analysis}", "{assay}"),
+        fastqs=dumped_fastqs,
+    output:
+        paths.parse_multiplexed("{analysis}", "{assay}"),
+    params:
+        bclen=ch.LIB_BC_LEN,
+    threads: THREADS
+    shell:
+        "splitcode --remultiplex --nFastqs=2 --gzip "
+        "-o {output[1]},{output[0]} --bclen={params.bclen} {input.batch} -t {threads}"
+
+
+# --------------------------------------------------------------------------- #
+# Parse config generation + barcode filtering / splitting
+# --------------------------------------------------------------------------- #
+
+rule parse_configs:
+    wildcard_constraints:
+        assay=PARSE_RE,
+    output:
+        generated=paths.parse_generated_files("{analysis}", "{assay}"),
+        splitcode_config=paths.parse_splitcode_config("{analysis}", "{assay}"),
+        keep=paths.parse_keep_file("{analysis}", "{assay}"),
+        rando_keep=paths.parse_randOpolyT_keep_file("{analysis}", "{assay}"),
+        x_string=paths.parse_x_string("{analysis}", "{assay}"),
+    params:
+        kit=lambda wc: ch.technology(A(wc), wc.assay),
+        parse_info_dir=paths.PARSE_INFO_DIR,
+        wells=lambda wc: ch.wells(A(wc), wc.assay),
+        sublibraries=assay_sublibraries,
+        out_dir=lambda wc: paths.configs_dir(wc.analysis, wc.assay),
+        filtered_prefix=lambda wc: f"{paths.processed_dir(wc.analysis, wc.assay)}/{wc.assay}",
+        randO_prefix=lambda wc: f"{paths.processed_dir(wc.analysis, wc.assay)}/randO",
+        polyT_prefix=lambda wc: f"{paths.processed_dir(wc.analysis, wc.assay)}/polyT",
+    script:
+        "scripts/parse_configs.py"
+
+
+rule parse_filter:
+    wildcard_constraints:
+        assay=PARSE_RE,
+    input:
+        multiplexed=paths.parse_multiplexed("{analysis}", "{assay}"),
+        config=paths.parse_splitcode_config("{analysis}", "{assay}"),
+        keep=paths.parse_keep_file("{analysis}", "{assay}"),
+        r1_R=paths.parse_r1_R("{analysis}", "{assay}"),
+        r1_T=paths.parse_r1_T("{analysis}", "{assay}"),
+    output:
+        paths.parse_filtered("{analysis}", "{assay}"),
+    threads: THREADS
+    shell:
+        "splitcode -c {input.config} --keep-grp {input.keep} --nFastqs=2 --gzip "
+        "--no-output --no-outb {input.multiplexed} -t {threads}"
+
+
+rule parse_split:
+    wildcard_constraints:
+        assay=PARSE_RE,
+    input:
+        filtered=paths.parse_filtered("{analysis}", "{assay}"),
+        config=paths.parse_splitcode_config("{analysis}", "{assay}"),
+        keep=paths.parse_randOpolyT_keep_file("{analysis}", "{assay}"),
+    output:
+        polyT=paths.parse_split("{analysis}", "{assay}", "polyT"),
+        randO=paths.parse_split("{analysis}", "{assay}", "randO"),
+    threads: THREADS
+    shell:
+        "splitcode -c {input.config} --keep {input.keep} --nFastqs=2 --gzip "
+        "--no-output --no-outb {input.filtered} -t {threads}"
+
+
+# --------------------------------------------------------------------------- #
+# subsampling: shared read-count minimum, then per-read seqtk (each read is its
+# own job so the scheduler can parallelize them)
+# --------------------------------------------------------------------------- #
+
+rule subsample_num:
+    # The shared minimum for one comparison group; {stag} names the group
+    # ("" untagged, or "_standard"/"_mini" for Analysis 2's two depths).
+    input:
+        subsample_num_inputs,
+    output:
+        paths.subsample_num_file("{analysis}", "{stag}"),
+    shell:
+        r"""for f in {input:q}; do echo $(( $(zcat "$f" | wc -l) / 4 )); done """
+        r"""| sort -n | head -1 > {output}"""
+
+
+rule subsample_main:
+    # One read of the main per-assay subsample (10x multiplexed or parse-filtered)
+    # to the {stag} group's depth. The full-depth source is shared across depths.
+    # `seqtk sample -2` (two-pass) keeps N reads by index instead of holding the
+    # sampled reads in memory (~5 GB even for a ~640M-read 10x subsample, vs ~225 GB
+    # for the 1-pass reservoir), while selecting the same read set — only the output
+    # order differs, i.e. the sub-0.01% UMI jitter we already tolerate. `threads`
+    # already bounds how many subsample jobs run at once (cores / threads).
+    input:
+        fastq=main_subsample_source,
+        num=paths.subsample_num_file("{analysis}", "{stag}"),
+    output:
+        paths.sampled_fastq("{analysis}", "{assay}", "{read}", "{stag}"),
+    threads: THREADS
+    shell:
+        "N=$(cat {input.num}); "
+        "seqtk sample -2 -s 42 {input.fastq} $N | pigz -p {threads} > {output}"
+
+
+rule subsample_parse_split:
+    # One read of a barcode-split (polyT/randO) subsample to the {stag} group's depth.
+    wildcard_constraints:
+        assay=PARSE_RE,
+    input:
+        fastq=lambda wc: paths.parse_split(wc.analysis, wc.assay, wc.kind)[int(wc.read)],
+        num=paths.subsample_num_file("{analysis}", "{stag}"),
+    output:
+        paths.sampled_fastq("{analysis}", "{assay}", "{read}", "{stag}", "{kind}"),
+    threads: THREADS
+    shell:
+        "N=$(cat {input.num}); "
+        "seqtk sample -2 -s 42 {input.fastq} $N | pigz -p {threads} > {output}"
+
+
+# --------------------------------------------------------------------------- #
+# pseudoalignment (kb count). One rule per tech, over full + all sampled depths
+# via the {leaf} output-dir wildcard. Parse runs use -r and emit a second
+# _modified h5ad.
+# --------------------------------------------------------------------------- #
+
+rule kb_count_tenx:
+    wildcard_constraints:
+        assay=TENX_RE,
+        leaf=r"10x_out|sampled_10x(_[A-Za-z0-9]+)?_out",
+    input:
+        unpack(kb_index_input),
+        fastqs=tenx_kb_fastqs,
+    output:
+        h5ad=paths.kb_h5ad("{analysis}", "{assay}", "{leaf}"),
+    params:
+        out=lambda wc: paths.kb_out(wc.analysis, wc.assay, wc.leaf),
+        tech=lambda wc: ch.technology(A(wc), wc.assay),
+    threads: THREADS
+    shell:
+        "kb count --overwrite --h5ad --workflow=nac -t {threads} "
+        "-i {input.index} -g {input.t2g} -c1 {input.cdna} -c2 {input.nascent} "
+        "-x {params.tech} -o {params.out} {input.fastqs}"
+
+
+rule kb_count_parse:
+    wildcard_constraints:
+        assay=PARSE_RE,
+        leaf=r"parse_out|sampled_(parse|polyT|randO)(_[A-Za-z0-9]+)?_out",
+    input:
+        unpack(kb_index_input),
+        fastqs=parse_kb_fastqs,
+        onlist=paths.parse_onlist("{analysis}", "{assay}"),
+        replace=paths.parse_replace("{analysis}", "{assay}"),
+        x_string=paths.parse_x_string("{analysis}", "{assay}"),
+    output:
+        h5ad=paths.kb_h5ad("{analysis}", "{assay}", "{leaf}"),
+        h5ad_modified=paths.kb_h5ad_modified("{analysis}", "{assay}", "{leaf}"),
+    params:
+        out=lambda wc: paths.kb_out(wc.analysis, wc.assay, wc.leaf),
+    threads: THREADS
+    shell:
+        "kb count --overwrite --h5ad --workflow=nac --strand=forward --parity=single "
+        "-w {input.onlist} -t {threads} -r {input.replace} "
+        "-i {input.index} -g {input.t2g} -c1 {input.cdna} -c2 {input.nascent} "
+        "-x $(cat {input.x_string}) -o {params.out} {input.fastqs}"
+
+
+# --------------------------------------------------------------------------- #
+# hashtags (feature barcodes): a per-assay kite index from the committed
+# hashtags.tsv, optional R2 trim, then a single full-depth kite kb count.
+# --------------------------------------------------------------------------- #
+
+rule kite_ref:
+    wildcard_constraints:
+        assay=HASHTAG_RE,
+    input:
+        tsv=paths.hashtags_tsv("{analysis}", "{assay}"),
+    output:
+        index=paths.hashtags_index_file("{analysis}", "{assay}"),
+        t2g=paths.hashtags_t2g_file("{analysis}", "{assay}"),
+        cdna=paths.hashtags_cdna_fasta_file("{analysis}", "{assay}"),
+    shell:
+        "kb ref --workflow kite --overwrite "
+        "-i {output.index} -g {output.t2g} -f1 {output.cdna} {input.tsv}"
+
+
+rule trim_r2:
+    # Trim R2 to the feature-barcode length so poly-A -> genomic k-mers don't
+    # collide with kite index entries. Only built when the config sets a trim.
+    wildcard_constraints:
+        assay=HASHTAG_RE,
+    input:
+        r2=lambda wc: paths.tenx_multiplexed(wc.analysis, wc.assay)[1],
+    output:
+        paths.hashtags_trimmed_r2("{analysis}", "{assay}"),
+    params:
+        n=lambda wc: ch.r2_trim_length(A(wc), wc.assay),
+    threads: THREADS
+    shell:
+        "seqtk trimfq -L {params.n} {input.r2} | pigz -p {threads} > {output}"
+
+
+rule kb_count_hashtags:
+    wildcard_constraints:
+        assay=HASHTAG_RE,
+        leaf="10x_hashtags_out",
+    input:
+        index=paths.hashtags_index_file("{analysis}", "{assay}"),
+        t2g=paths.hashtags_t2g_file("{analysis}", "{assay}"),
+        fastqs=hashtags_kb_fastqs,
+    output:
+        h5ad=paths.kb_h5ad("{analysis}", "{assay}", "{leaf}"),
+    params:
+        out=lambda wc: paths.kb_out(wc.analysis, wc.assay, wc.leaf),
+        tech=lambda wc: ch.technology(A(wc), wc.assay),
+    threads: THREADS
+    shell:
+        "kb count --workflow kite --overwrite --h5ad -t {threads} "
+        "-i {input.index} -g {input.t2g} -x {params.tech} "
+        "-o {params.out} {input.fastqs}"

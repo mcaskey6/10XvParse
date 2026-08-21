@@ -64,3 +64,12 @@ tech:
  10x_H2: 10XV3
  parse_H1: WT_v2
  parse_H2: WT_v2
+
+# Subsample comparison groups (moved out of the old Scripts/analysis3.py).
+# All four assays are subsampled to a single shared minimum read count
+# (analysis3.py called get_subsample_num over all of them at once), so they
+# form one untagged group.
+comparisons:
+ - tag: ""
+   tenx: [10x_H1, 10x_H2]
+   parse: [parse_H1, parse_H2]

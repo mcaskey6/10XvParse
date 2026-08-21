@@ -77,3 +77,16 @@ tech:
 
  wells:
   parse: [C7, C8, C9, C10, C11, C12, D1, D2]
+
+# Two subsample depths (analysis2.py's standard/mini): the same 10x assay is
+# subsampled once against parse (WT) and once against parse_mini, each to that
+# group's shared minimum. The tag names the depth; it flows onto every sampled
+# output of the group (Sampled_<tag>/, subsample_num_<tag>.txt, sampled_*_<tag>_out).
+# The 10x_hashtags assay is not subsampled (single full-depth kite count).
+comparisons:
+ - tag: standard
+   tenx: [10x]
+   parse: [parse]
+ - tag: mini
+   tenx: [10x]
+   parse: [parse_mini]

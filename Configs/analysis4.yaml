@@ -29,3 +29,10 @@ species: human_mouse
 tech:
   10x: 10XV3
   parse: WT_mini_v2
+
+# One untagged subsample group (analysis4.py subsampled 10x + parse to one shared
+# minimum).
+comparisons:
+ - tag: ""
+   tenx: [10x]
+   parse: [parse]

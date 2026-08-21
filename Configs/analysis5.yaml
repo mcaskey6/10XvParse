@@ -24,3 +24,11 @@ species: human
 tech:
  10x: 10XV3
  parse: WT_v2
+
+# Subsample comparison groups (moved out of the old Scripts/analysis5.py).
+# Each group's assays are all subsampled to the group's shared minimum read
+# count. tag "" = the single default depth (no Sampled_<tag> split).
+comparisons:
+ - tag: ""
+   tenx: [10x]
+   parse: [parse]

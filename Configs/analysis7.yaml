@@ -27,3 +27,11 @@ tech:
 # other barcodes, dropping pseudoalignment
 trim:
  10x_hashtags: 8
+
+# No SRA/ERA block: reads are pre-downloaded local files (Lib{i}_{read}.fastq.gz
+# in each assay's FASTA/Dumped dir), discovered by the local source path.
+# One untagged subsample group (10x vs parse); 10x_hashtags is not subsampled.
+comparisons:
+ - tag: ""
+   tenx: [10x]
+   parse: [parse]

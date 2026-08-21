@@ -29,3 +29,4 @@ Configs/10x_info/
 *.png
 **/Notebooks/barnyard_comparison/10x_data/**
 **/Notebooks/barnyard_comparison/parse_data/**
+.snakemake

@@ -38,3 +38,10 @@ tech:
 # other barcodes, dropping pseudoalignment from 0.3% to ~80%+.
 trim:
  10x_hashtags: 8
+
+# One untagged subsample group (10x vs parse). The 10x_hashtags assay is not
+# subsampled — it only gets a single full-depth kite count.
+comparisons:
+ - tag: ""
+   tenx: [10x]
+   parse: [parse]

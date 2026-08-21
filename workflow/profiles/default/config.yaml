@@ -1,0 +1,9 @@
+# Default workflow profile for the 10XvParse pipeline.
+#
+# Run with:  snakemake --workflow-profile workflow/profiles/default <targets>
+#
+# Subsampling uses `seqtk sample -2` (two-pass), which keeps reads by index rather
+# than in memory (~5 GB even for a ~640M-read subsample), so no explicit seqtk
+# concurrency/memory cap is needed — `threads` already bounds how many subsample
+# (and kb count) jobs run at once to cores / threads.
+cores: 32
