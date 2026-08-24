@@ -6,31 +6,33 @@ This repository reproduces and compares published single-cell RNA-seq datasets g
 
 ```
 10XvParse/
-├── config/                  # Snakemake configuration
+├── Config/                  # Snakemake configuration
 │   ├── config.yaml          # thread count + the analyses to build (name -> config file)
-│   └── indexes.yaml         # per-species reference URLs (+ HRT Atlas URL; barnyard keys)
-├── workflow/                # the Snakemake workflow (self-contained)
+│   ├── indexes.yaml         # per-species reference URLs (+ HRT Atlas URL; barnyard keys)
+│   └── analysisN.yaml       # one file per analysis (assays, read sources, comparisons)
+├── workflow/                # the Snakemake workflow (self-contained; lowercase by Snakemake convention)
 │   ├── Snakefile            # all rules
 │   ├── paths.py             # every input/output path (the naming conventions)
 │   ├── config_helpers.py    # reading + interpreting the per-analysis configs
 │   ├── scripts/             # the few Python steps (Parse config gen, batch file, STAR params)
 │   └── profiles/default/    # default run settings (cores)
-├── Configs/                 # per-analysis inputs
-│   ├── 10x_info/            # 10x kit barcode whitelists (for STARsolo)
+├── Resources/               # committed static inputs
+│   ├── 10x_info/            # 10x kit barcode whitelists for STARsolo (gitignored; added manually)
 │   ├── parse_info/          # Parse kit barcode reference (kits_info.txt + barcodes/*.csv)
-│   ├── analysisN.yaml       # one file per analysis (assays, read sources, comparisons)
-│   └── Analysis_N/<assay>/  # auto-generated Parse config files (+ committed hashtags.tsv)
+│   └── Analysis_N/<assay>/  # per-assay committed inputs (hashtags.tsv, hto_demultiplexed.csv)
+├── Generated/               # workflow-generated Parse/STAR configs + read_counts.txt (gitignored)
 ├── Data/                    # FASTQs, count matrices (.h5ad), BAMs, and plots (gitignored)
 ├── Index/                   # kallisto + STAR indices and genome references, by species
+├── Tests/                   # synthetic end-to-end test + CI environment
 ├── Notebooks/               # Jupyter notebooks for downstream analysis and figures
-└── Scripts/, XvP_utils/     # legacy hand-run pipeline, superseded by workflow/
+└── XvP_utils/               # plotting/analysis helpers imported by the notebooks
 ```
 
-> `Scripts/` and the `XvP_utils` package are the original, hand-run pipeline (one Python entry point per analysis). The Snakemake workflow in `workflow/` has replaced them and depends on nothing outside `workflow/`; the legacy code is kept only as a reference and will be removed once no longer needed.
+> The workflow separates **committed static inputs** (`Config/`, `Resources/`) from files it **generates** (`Generated/`, `Data/`). Everything under `Generated/` and `Data/` is git-ignored and rebuilt on demand, so only the true inputs are version-controlled. `XvP_utils` holds the plotting/analysis helpers the notebooks import; it is not used by the workflow, which depends on nothing outside `workflow/`.
 
 ### Parse barcode config files are auto-generated
 
-For each Parse assay the workflow generates the following files in `Configs/Analysis_N/<assay>/` at run time, derived from the kit name and optional well list in the analysis config:
+For each Parse assay the workflow generates the following files in `Generated/Analysis_N/<assay>/` at run time, derived from the kit name and optional well list in the analysis config:
 
 | File | Contents |
 |------|----------|
@@ -43,7 +45,7 @@ For each Parse assay the workflow generates the following files in `Configs/Anal
 | `sublibraries.txt` | Which sublibrary barcode was assigned to which sublibrary name |
 | `x_string.txt` | The kb-python technology x-string (shifted for the sublibrary barcode) |
 
-The source of truth for all barcode sequences is `Configs/parse_info/`: `kits_info.txt` lists the barcode files for each kit version, and `barcodes/*.csv` holds the sequences. The workflow also writes a few small splitcode/STAR helper files into the same directory (`config_RT_parse.txt`, `parse_keep.txt`, `randOpolyT_keep.txt`, and the `star_*` position/whitelist files).
+The source of truth for all barcode sequences is the committed `Resources/parse_info/`: `kits_info.txt` lists the barcode files for each kit version, and `barcodes/*.csv` holds the sequences. Alongside the files above, the workflow writes a few small splitcode/STAR helper files into `Generated/Analysis_N/<assay>/` (`config_RT_parse.txt`, `parse_keep.txt`, `randOpolyT_keep.txt`, and the `star_*` position/whitelist files).
 
 ## Environment Setup
 
@@ -56,7 +58,7 @@ conda activate 10XvParse
 
 This provides Snakemake and the command-line tools the workflow calls — `kb-python`, `splitcode`, `sra-tools`, `seqtk`, `pigz`, `STAR`, `samtools`, `gffread`, and RSeQC's `geneBody_coverage.py`. The `workflow/` package itself imports nothing beyond the standard library.
 
-The legacy `Scripts/` and `Notebooks/` still import the local `XvP_utils` package; install it in editable mode only if you use those:
+The `Notebooks/` still import the local `XvP_utils` package; install it in editable mode only if you use them:
 
 ```bash
 pip install -e .
@@ -70,7 +72,7 @@ Run from the repository root, in the `10XvParse` environment:
 snakemake --workflow-profile workflow/profiles/default all
 ```
 
-`all` builds the gene-count matrices for every analysis registered in `config/config.yaml`. To build only part of the workflow, name specific targets:
+`all` builds the gene-count matrices for every analysis registered in `Config/config.yaml`. To build only part of the workflow, name specific targets:
 
 ```bash
 # one assay's count matrix
@@ -170,7 +172,7 @@ Adding an analysis is entirely config-driven — no workflow code changes are ne
 
 ### 1. Add the reference (only if it's a new species)
 
-Reference URLs live under the `indexes:` key of `config/indexes.yaml`. `human`, `mouse`, and the `human_mouse` barnyard reference already exist. To add a species or a different Ensembl release, add an entry:
+Reference URLs live under the `indexes:` key of `Config/indexes.yaml`. `human`, `mouse`, and the `human_mouse` barnyard reference already exist. To add a species or a different Ensembl release, add an entry:
 
 ```yaml
 indexes:
@@ -184,12 +186,12 @@ The index directory (`Index/{species}/`) is shared across all analyses of the sa
 
 ### 2. Write the analysis config
 
-Create `Configs/analysisN.yaml`. Each assay is named as a key under `tech:`; its reads come from an `SRA:`, `ERA:`, or `local:` block, and `comparisons:` says which 10x/Parse assays are subsampled together.
+Create `Config/analysisN.yaml`. Each assay is named as a key under `tech:`; its reads come from an `SRA:`, `ERA:`, or `local:` block, and `comparisons:` says which 10x/Parse assays are subsampled together.
 
 ```yaml
 name: Analysis_N
 
-species: human            # or "mouse" / "human_mouse"; picks the config/indexes.yaml entry
+species: human            # or "mouse" / "human_mouse"; picks the Config/indexes.yaml entry
 
 # Read source. Use one of SRA / ERA / local per assay. Parse assays group their
 # accessions by sublibrary (see "Parse sublibraries" below); 10x assays are flat.
@@ -234,7 +236,7 @@ comparisons:
     parse: [parse]
 ```
 
-For Parse assays the `tech` value must be a kit name of the form `<kit>_v<chem>` (e.g. `WT_v2`, `WT_mini_v3`); it is looked up in `Configs/parse_info/kits_info.txt`. Feature-barcode ("hashtag") assays are recognised by `hashtag` in the assay name and use a kite index built from a committed `Configs/Analysis_N/<assay>/hashtags.tsv`.
+For Parse assays the `tech` value must be a kit name of the form `<kit>_v<chem>` (e.g. `WT_v2`, `WT_mini_v3`); it is looked up in `Resources/parse_info/kits_info.txt`. Feature-barcode ("hashtag") assays are recognised by `hashtag` in the assay name and use a kite index built from a committed `Resources/Analysis_N/<assay>/hashtags.tsv`.
 
 **Pre-downloaded (local) reads.** For files you already have, use a `local:` block instead of `SRA`/`ERA`. Each library is an `[R1, R2]` filename pair (in the assay's read order) living in `Data/Analysis_N/<assay>/FASTA/Dumped/`; filenames are used as given, so arbitrary Illumina names work without renaming, and each pair is one Parse sublibrary in the order listed:
 
@@ -249,11 +251,11 @@ local:
 
 ### 3. Register the analysis
 
-Add it under `analyses:` in `config/config.yaml`:
+Add it under `analyses:` in `Config/config.yaml`:
 
 ```yaml
 analyses:
-  Analysis_N: Configs/analysisN.yaml
+  Analysis_N: Config/analysisN.yaml
 ```
 
 ### 4. Run it
@@ -274,5 +276,5 @@ A Parse sublibrary is distinguished by its sequencing index, not by the combinat
 
 Two consequences worth knowing:
 
-- Barcodes are assigned in the order sublibraries first appear in the config, so **reordering them changes the barcode assignment of already-processed data**. The assignment for a given run is recorded in `Configs/Analysis_N/<assay>/sublibraries.txt`.
+- Barcodes are assigned in the order sublibraries first appear in the config, so **reordering them changes the barcode assignment of already-processed data**. The assignment for a given run is recorded in `Generated/Analysis_N/<assay>/sublibraries.txt`.
 - Parse cell barcodes in the resulting H5ADs are consequently 4 bp longer, with the sublibrary barcode leading. bc1 remains the trailing 8 bp, so notebook logic keyed on the end of the barcode is unaffected.

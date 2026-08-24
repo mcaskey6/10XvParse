@@ -5,17 +5,17 @@
 # technologies to a matched sequencing depth so they can be compared fairly.
 #
 # CONFIGURE
-#   config/config.yaml        `threads`, and `analyses:` mapping each analysis
-#                             name to its Configs/<analysis>.yaml.
-#   config/indexes.yaml       per-species reference URLs. A dual-species
+#   Config/config.yaml        `threads`, and `analyses:` mapping each analysis
+#                             name to its Config/<analysis>.yaml.
+#   Config/indexes.yaml       per-species reference URLs. A dual-species
 #                             ("barnyard") reference sets `barnyard: true` and adds
 #                             *_2 keys for the second species.
-#   Configs/<analysis>.yaml   one analysis: each assay's technology (`tech:`), read
+#   Config/<analysis>.yaml   one analysis: each assay's technology (`tech:`), read
 #                             source (an `SRA:`/`ERA:`/`local:` block), `species:`,
 #                             optional `read_num:`, `wells:`, `trim:`, and a
 #                             `comparisons:` block listing which 10x/Parse assays
 #                             are subsampled together (and to how many depths).
-#   To add an analysis: write its Configs/<analysis>.yaml and register it under
+#   To add an analysis: write its Config/<analysis>.yaml and register it under
 #   `analyses:` — no workflow changes needed.
 #
 # RUN
@@ -46,13 +46,13 @@ import paths
 import config_helpers as ch
 
 
-configfile: "config/config.yaml"
-configfile: "config/indexes.yaml"
+configfile: "Config/config.yaml"
+configfile: "Config/indexes.yaml"
 
 THREADS = config.get("threads", 8)
 INDEXES = config["indexes"]
 
-# Load each analysis's config (Configs/analysisN.yaml) keyed by analysis name.
+# Load each analysis's config (Config/analysisN.yaml) keyed by analysis name.
 ANALYSES = {}
 for _name, _cfg_path in config["analyses"].items():
     with open(_cfg_path) as _f:
@@ -89,7 +89,7 @@ NOBC_RE = _re(NOBC_ASSAYS)
 
 # A single-species reference is downloaded directly; a barnyard (dual-species) one
 # is built by prefixing and concatenating two species. Which rule applies is chosen
-# by the `barnyard:` flag on the species in config/indexes.yaml.
+# by the `barnyard:` flag on the species in Config/indexes.yaml.
 BARNYARD_SPECIES = sorted(sp for sp, v in INDEXES.items() if v.get("barnyard"))
 SINGLE_SPECIES = sorted(sp for sp in INDEXES if sp not in BARNYARD_SPECIES)
 BARNYARD_RE = _re(BARNYARD_SPECIES)
@@ -97,7 +97,7 @@ SINGLE_RE = _re(SINGLE_SPECIES)
 
 
 wildcard_constraints:
-    # Any analysis name (the keys under `analyses:` in config/config.yaml); it names a
+    # Any analysis name (the keys under `analyses:` in Config/config.yaml); it names a
     # single path segment, so anything but a path separator. The tightly-constrained
     # `assay` (a known assay name) keeps Data/{analysis}/{assay}/... unambiguous.
     analysis=r"[^/]+",
@@ -490,7 +490,7 @@ rule parse_configs:
         parse_info_dir=paths.PARSE_INFO_DIR,
         wells=lambda wc: ch.wells(cfg_of(wc), wc.assay),
         sublibraries=assay_sublibraries,
-        out_dir=lambda wc: paths.configs_dir(wc.analysis, wc.assay),
+        out_dir=lambda wc: paths.generated_dir(wc.analysis, wc.assay),
         filtered_prefix=lambda wc: f"{paths.processed_dir(wc.analysis, wc.assay)}/{wc.assay}",
         randO_prefix=lambda wc: f"{paths.processed_dir(wc.analysis, wc.assay)}/randO",
         polyT_prefix=lambda wc: f"{paths.processed_dir(wc.analysis, wc.assay)}/polyT",
@@ -800,7 +800,7 @@ rule parse_star_params:
         umi=paths.parse_star_umi("{analysis}", "{assay}"),
         whitelists=paths.parse_star_whitelists("{analysis}", "{assay}"),
     params:
-        configs_dir=lambda wc: paths.configs_dir(wc.analysis, wc.assay),
+        generated_dir=lambda wc: paths.generated_dir(wc.analysis, wc.assay),
     script:
         "scripts/parse_star_params.py"
 

@@ -1,6 +1,6 @@
 """Parse Biosciences barcode logic for the 10XvParse workflow.
 
-Turns a Parse kit name + the committed barcode tables (Configs/parse_info/) into
+Turns a Parse kit name + the committed barcode tables (Resources/parse_info/) into
 the config files the splitcode / kb count / STARsolo steps consume — the cell
 onlist, the randO->polyT replace table, per-round STAR whitelists, and the
 kb-python x_string — and registers the synthetic "4th-round" sublibrary barcode

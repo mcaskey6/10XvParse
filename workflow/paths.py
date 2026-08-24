@@ -31,16 +31,26 @@ def star_index_dir(species: str) -> str:
     return f"Index/{species}_STAR"
 
 
-def configs_dir(analysis: str, assay: str) -> str:
-    """Per-assay config working dir (generated Parse files, hashtags.tsv)."""
-    return f"Configs/{analysis}/{assay}"
+def generated_dir(analysis: str, assay: str) -> str:
+    """Per-assay dir for files the workflow GENERATES (the Parse splitcode/kb config
+    files and STARsolo params). Kept apart from the committed static inputs so the
+    whole tree can be git-ignored and rebuilt from scratch."""
+    return f"Generated/{analysis}/{assay}"
 
 
-PARSE_INFO_DIR = "Configs/parse_info"
+def resources_assay_dir(analysis: str, assay: str) -> str:
+    """Per-assay dir for committed static inputs tied to one assay (currently just the
+    hashtag feature-barcode table)."""
+    return f"Resources/{analysis}/{assay}"
+
+
+# Committed static barcode references live under Resources/ alongside the per-assay
+# inputs above.
+PARSE_INFO_DIR = "Resources/parse_info"
 
 
 def tenx_whitelist(tech: str) -> str:
-    return f"Configs/10x_info/{tech}_whitelist.txt"
+    return f"Resources/10x_info/{tech}_whitelist.txt"
 
 
 def plots_dir(analysis: str) -> str:
@@ -118,7 +128,7 @@ def hashtags_cdna_fasta_file(analysis: str, assay: str) -> str:
 
 def hashtags_tsv(analysis: str, assay: str) -> str:
     """Committed feature-barcode table (name<TAB>barcode) that seeds the kite index."""
-    return f"{configs_dir(analysis, assay)}/hashtags.tsv"
+    return f"{resources_assay_dir(analysis, assay)}/hashtags.tsv"
 
 
 # --------------------------------------------------------------------------- #
@@ -274,42 +284,42 @@ PARSE_GENERATED = [
 
 
 def parse_generated_files(analysis: str, assay: str) -> list[str]:
-    d = configs_dir(analysis, assay)
+    d = generated_dir(analysis, assay)
     return [f"{d}/{name}" for name in PARSE_GENERATED]
 
 
 def parse_onlist(analysis: str, assay: str) -> str:
-    return f"{configs_dir(analysis, assay)}/onlist.txt"
+    return f"{generated_dir(analysis, assay)}/onlist.txt"
 
 
 def parse_replace(analysis: str, assay: str) -> str:
-    return f"{configs_dir(analysis, assay)}/replace.txt"
+    return f"{generated_dir(analysis, assay)}/replace.txt"
 
 
 def parse_x_string(analysis: str, assay: str) -> str:
     """kb-python x_string written by the parse_configs step; read by kb count -x."""
-    return f"{configs_dir(analysis, assay)}/x_string.txt"
+    return f"{generated_dir(analysis, assay)}/x_string.txt"
 
 
 def parse_r1_R(analysis: str, assay: str) -> str:
-    return f"{configs_dir(analysis, assay)}/r1_R.txt"
+    return f"{generated_dir(analysis, assay)}/r1_R.txt"
 
 
 def parse_r1_T(analysis: str, assay: str) -> str:
-    return f"{configs_dir(analysis, assay)}/r1_T.txt"
+    return f"{generated_dir(analysis, assay)}/r1_T.txt"
 
 
 # Files written at run time by the filter / split splitcode steps.
 def parse_splitcode_config(analysis: str, assay: str) -> str:
-    return f"{configs_dir(analysis, assay)}/config_RT_parse.txt"
+    return f"{generated_dir(analysis, assay)}/config_RT_parse.txt"
 
 
 def parse_keep_file(analysis: str, assay: str) -> str:
-    return f"{configs_dir(analysis, assay)}/parse_keep.txt"
+    return f"{generated_dir(analysis, assay)}/parse_keep.txt"
 
 
 def parse_randOpolyT_keep_file(analysis: str, assay: str) -> str:
-    return f"{configs_dir(analysis, assay)}/randOpolyT_keep.txt"
+    return f"{generated_dir(analysis, assay)}/randOpolyT_keep.txt"
 
 
 # --------------------------------------------------------------------------- #
@@ -364,15 +374,15 @@ def star_bam(analysis: str, assay: str, label: str, stag: str = "") -> str:
 # STAR CB/UMI positions + whitelist order for a Parse assay, derived from its
 # x_string by scripts/parse_star_params.py.
 def parse_star_positions(analysis: str, assay: str) -> str:
-    return f"{configs_dir(analysis, assay)}/star_cb_positions.txt"
+    return f"{generated_dir(analysis, assay)}/star_cb_positions.txt"
 
 
 def parse_star_umi(analysis: str, assay: str) -> str:
-    return f"{configs_dir(analysis, assay)}/star_umi_position.txt"
+    return f"{generated_dir(analysis, assay)}/star_umi_position.txt"
 
 
 def parse_star_whitelists(analysis: str, assay: str) -> str:
-    return f"{configs_dir(analysis, assay)}/star_whitelists.txt"
+    return f"{generated_dir(analysis, assay)}/star_whitelists.txt"
 
 
 def genebody_prefix(analysis: str, tag: str = "") -> str:
@@ -389,5 +399,6 @@ def read_counts_file(analysis: str) -> str:
     """One file per analysis holding a ``<fastq> <read_count>`` line for each
     first-read processed FASTQ. Subsample jobs compute their group's minimum on
     the fly from the relevant lines. The file is group-agnostic, so changing the
-    comparison groups doesn't invalidate it."""
-    return f"Data/{analysis}/read_counts.txt"
+    comparison groups doesn't invalidate it. Lives under Generated/ (a workflow
+    output, not a static input)."""
+    return f"Generated/{analysis}/read_counts.txt"

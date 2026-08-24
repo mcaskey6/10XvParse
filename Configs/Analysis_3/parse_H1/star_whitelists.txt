@@ -1,1 +1,0 @@
-Configs/Analysis_3/parse_H1/lib_bc.txt Configs/Analysis_3/parse_H1/star_bc3.txt Configs/Analysis_3/parse_H1/star_bc2.txt Configs/Analysis_3/parse_H1/star_bc1.txt

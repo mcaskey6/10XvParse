@@ -1,2 +1,0 @@
-AAAA	Lib0
-AAAC	Lib1

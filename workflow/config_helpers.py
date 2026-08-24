@@ -1,4 +1,4 @@
-"""Helpers for reading a per-analysis config (Configs/<analysis>.yaml).
+"""Helpers for reading a per-analysis config (Config/<analysis>.yaml).
 
 The Snakefile reads each analysis config as a plain dict; the functions here
 interpret it — the read sources and sublibraries, per-assay read numbers, assay
@@ -9,7 +9,7 @@ order sublibraries appear in the YAML, and that order determines which splitcode
 remultiplexing barcode each sublibrary receives — so reordering sublibraries in a
 config would silently change the barcode assignment of already-processed data.
 
-Reference URLs are read separately from ``config/indexes.yaml`` (as
+Reference URLs are read separately from ``Config/indexes.yaml`` (as
 ``config["indexes"][species]``), not here.
 """
 from __future__ import annotations

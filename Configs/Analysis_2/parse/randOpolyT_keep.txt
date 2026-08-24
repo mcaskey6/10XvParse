@@ -1,2 +1,0 @@
-r1_R Data/Analysis_2/parse/FASTA/Processed/randO
-r1_T Data/Analysis_2/parse/FASTA/Processed/polyT

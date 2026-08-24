@@ -2,7 +2,7 @@ name: e2e
 
 # Runs the tiny synthetic end-to-end test of the Snakemake workflow on every push
 # and pull request. No network/SRA access is needed: the reference and reads are
-# generated locally by tests/generate_test_data.py.
+# generated locally by Tests/generate_test_data.py.
 on:
   push:
     branches: ["**"]
@@ -20,8 +20,8 @@ jobs:
       - name: Set up test environment
         uses: mamba-org/setup-micromamba@v2
         with:
-          environment-file: tests/ci-env.yml
+          environment-file: Tests/ci-env.yml
           cache-environment: true
 
       - name: Run end-to-end test
-        run: bash tests/run_e2e.sh
+        run: bash Tests/run_e2e.sh

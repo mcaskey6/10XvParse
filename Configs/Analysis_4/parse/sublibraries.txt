@@ -1,2 +1,0 @@
-AAAA	sub1
-AAAC	sub2

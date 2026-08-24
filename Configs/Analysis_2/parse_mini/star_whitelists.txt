@@ -1,1 +1,0 @@
-Configs/Analysis_2/parse_mini/lib_bc.txt Configs/Analysis_2/parse_mini/star_bc3.txt Configs/Analysis_2/parse_mini/star_bc2.txt Configs/Analysis_2/parse_mini/star_bc1.txt

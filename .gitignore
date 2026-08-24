@@ -22,13 +22,14 @@
 **/Data/**
 **/Index/**
 **/Logs/**
-!**/Configs/**
-Configs/10x_info/
+!**/Resources/**
+Resources/10x_info/
 *.DS_Store
 *.egg-info/
 *.png
 **/Notebooks/barnyard_comparison/10x_data/**
 **/Notebooks/barnyard_comparison/parse_data/**
 .snakemake
-# Generated end-to-end test artifacts (Data/Index are already ignored above)
-Configs/Analysis_test/
+# Generated workflow files (Parse splitcode/kb configs, STAR params, read_counts);
+# rebuilt on demand, never committed. Covers the e2e test's Generated/Analysis_test too.
+**/Generated/**

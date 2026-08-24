@@ -1,1 +1,0 @@
-round1 Data/Analysis_2/parse_mini/FASTA/Processed/parse_mini

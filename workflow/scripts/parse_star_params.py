@@ -15,16 +15,16 @@ from pathlib import Path
 from parse_config import x_string_to_star_params  # sibling module in workflow/scripts/
 
 o = snakemake.output          # noqa: F821 (injected by Snakemake)
-configs_dir = Path(snakemake.params.configs_dir)  # noqa: F821
+generated_dir = Path(snakemake.params.generated_dir)  # noqa: F821
 
 x_string = Path(snakemake.input.x_string).read_text().strip()  # noqa: F821
 cb_positions, umi_position = x_string_to_star_params(x_string)
 
 # One whitelist per CB position, in x_string order; the sublibrary barcode comes
 # first when the reads were remultiplexed with one (an extra CB position).
-whitelists = [str(configs_dir / f"star_bc{i}.txt") for i in (3, 2, 1)]
+whitelists = [str(generated_dir / f"star_bc{i}.txt") for i in (3, 2, 1)]
 if len(cb_positions) == len(whitelists) + 1:
-    whitelists.insert(0, str(configs_dir / "lib_bc.txt"))
+    whitelists.insert(0, str(generated_dir / "lib_bc.txt"))
 
 Path(o.positions).write_text(" ".join(cb_positions))
 Path(o.umi).write_text(umi_position)

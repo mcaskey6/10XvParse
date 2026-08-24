@@ -1,1 +1,0 @@
-round1 Data/Analysis_3/parse_H1/FASTA/Processed/parse_H1
