@@ -1,30 +1,28 @@
-"""Config parsing helpers for the 10XvParse Snakemake workflow.
+"""Helpers for reading a per-analysis config (Configs/<analysis>.yaml).
 
-These are the load-bearing bits salvaged from ``AnalysisConfig`` in
-``XvP_utils/preprocessing/classes.py``, rewritten to operate on the plain dicts
-Snakemake's ``config`` mechanism provides instead of frozen dataclasses.
+The Snakefile reads each analysis config as a plain dict; the functions here
+interpret it — the read sources and sublibraries, per-assay read numbers, assay
+type, wells, trim, and the subsample comparison groups.
 
-The behaviour here must match ``AnalysisConfig.from_yaml`` exactly — in
-particular ``flatten_accessions`` preserves sublibrary order, which determines
-which splitcode remultiplexing barcode each sublibrary receives (reordering
-sublibraries in the YAML would silently invalidate previously generated data).
+IMPORTANT: sublibrary order is load-bearing. ``flatten_accessions`` preserves the
+order sublibraries appear in the YAML, and that order determines which splitcode
+remultiplexing barcode each sublibrary receives — so reordering sublibraries in a
+config would silently change the barcode assignment of already-processed data.
 
-Reference URLs are NOT loaded here: they live in ``config/indexes.yaml`` and are
-read as plain ``config["indexes"][species]`` dict access.
+Reference URLs are read separately from ``config/indexes.yaml`` (as
+``config["indexes"][species]``), not here.
 """
 from __future__ import annotations
 
 import re
 
 # Length of the synthetic sublibrary "4th round" barcode splitcode prepends when
-# remultiplexing Parse libraries. Mirrors parse_config.LIB_BC_LEN; inlined so the
-# Snakefile need not import XvP_utils at DAG-build time.
+# remultiplexing Parse libraries (kept equal to parse_config.LIB_BC_LEN). Defined
+# here too so this config module has no dependencies beyond the standard library.
 LIB_BC_LEN = 4
 
-# Parse kit tech strings look like "<kit>_v<chem>" (e.g. WT_v2, WT_mini_v3);
-# 10XV3/10XV4 do not match. Kept in sync with parse_config._PARSE_PATTERN, but
-# inlined here so importing this module (during Snakefile parsing / DAG build)
-# does not require the XvP_utils package or its runtime dependencies.
+# A Parse kit tech string looks like "<kit>_v<chem>" (e.g. WT_v2, WT_mini_v3);
+# 10x strings (10XV3/10XV4) don't match. Distinguishes Parse from 10x assays.
 _PARSE_KIT_PATTERN = re.compile(r"^.+_v\d+$")
 
 
@@ -41,8 +39,7 @@ def flatten_accessions(entry) -> tuple[list[str], list[str]]:
 
     Returns ``(accessions, sublibrary_labels)``, the labels list parallel to the
     accessions (empty for a flat list). Mapping key order is preserved and is
-    load-bearing (see module docstring). Verbatim port of
-    ``classes._flatten_accessions``.
+    load-bearing (see module docstring).
     """
     if isinstance(entry, dict):
         accessions: list[str] = []
@@ -103,9 +100,8 @@ def default_read_nums(cfg: dict, assay: str) -> tuple[int, int]:
 
 
 def read_num_overrides(cfg: dict, assay: str) -> dict[str, tuple[int, int]]:
-    """Per-sublibrary ``{sublibrary: (R1, R2)}`` overrides, as in
-    ``AnalysisConfig.from_yaml`` (any read_num key other than R1/R2 whose value
-    is a dict)."""
+    """Per-sublibrary ``{sublibrary: (R1, R2)}`` read-number overrides — any
+    ``read_num`` key other than R1/R2 whose value is itself an {R1, R2} dict."""
     block = read_num_block(cfg, assay)
     return {
         sub: (spec["R1"], spec["R2"])
@@ -141,14 +137,14 @@ def r2_trim_length(cfg: dict, assay: str):
 
 
 # --------------------------------------------------------------------------- #
-# ENA FTP URLs (ERA source) — verbatim port of utils.era_ftp_url
+# ENA FTP URLs (ERA source)
 # --------------------------------------------------------------------------- #
 
 def era_ftp_url(err: str, read_num: int) -> str:
     """The ENA FTP URL for one run accession and read number (1 or 2).
 
-    ENA nests runs under a length-dependent subdirectory scheme; mirrors
-    ``utils.era_ftp_url`` exactly so the download rule reproduces the old paths.
+    ENA nests a run under a subdirectory scheme that depends on the accession's
+    length; this reproduces that layout so the download rule fetches the right file.
     """
     prefix = err[:6]
     n = len(err)
@@ -189,7 +185,7 @@ def assay_bclen(cfg: dict, assay: str):
 
 
 # --------------------------------------------------------------------------- #
-# comparison groups (moved out of the old Scripts/analysisN.py)
+# comparison groups (which assays are subsampled together, and to how many depths)
 # --------------------------------------------------------------------------- #
 
 def comparisons(cfg: dict) -> list[dict]:

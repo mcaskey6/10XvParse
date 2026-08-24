@@ -1,0 +1,13 @@
+# Overlay config for the end-to-end test, merged on top of config/config.yaml and
+# config/indexes.yaml via `snakemake --configfile tests/e2e/config.yaml`. It adds
+# the test analysis and its synthetic species; the real analyses stay registered but
+# are not built because the test targets specific Analysis_test outputs on the CLI.
+analyses:
+  Analysis_test: tests/e2e/analysis_test.yaml
+
+indexes:
+  # The reference files (Index/testsp/ref.*) are staged by the generator, so
+  # download_reference never runs; these URLs are placeholders for schema parity.
+  testsp:
+    fasta: file:///dev/null
+    gtf: file:///dev/null

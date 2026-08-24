@@ -1,7 +1,0 @@
-species: human_mouse
-human_fasta: https://ftp.ensembl.org/pub/release-112/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
-mouse_fasta: https://ftp.ensembl.org/pub/release-115/fasta/mus_musculus/dna/Mus_musculus.GRCm39.dna.primary_assembly.fa.gz
-human_gtf: https://ftp.ensembl.org/pub/release-112/gtf/homo_sapiens/Homo_sapiens.GRCh38.112.gtf.gz
-mouse_gtf: https://ftp.ensembl.org/pub/release-115/gtf/mus_musculus/Mus_musculus.GRCm39.115.gtf.gz
-human_hrt_atlas_url: https://raw.githubusercontent.com/Bidossessih/HRT_Atlas/master/www/Housekeeping_GenesHuman.csv
-mouse_hrt_atlas_url: https://raw.githubusercontent.com/Bidossessih/HRT_Atlas/master/www/Housekeeping_GenesMouse.csv

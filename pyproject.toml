@@ -29,4 +29,4 @@ where = ["."]
 include = ["XvP_utils*"]
 
 [tool.setuptools.package-data]
-"XvP_utils.plotting" = ["*.R", "*.csv"]
+"XvP_utils" = ["*.R", "*.csv"]

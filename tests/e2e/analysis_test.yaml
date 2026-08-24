@@ -1,0 +1,33 @@
+name: Analysis_test
+
+# Tiny synthetic end-to-end test. Reads are pre-generated local files (no download),
+# staged into each assay's FASTA/Dumped dir by tests/generate_test_data.py. Each
+# assay lists its libraries as [R1, R2] filename pairs; parse has two sublibraries.
+local:
+ 10x:
+ - [Lib0_1.fastq.gz, Lib0_2.fastq.gz]
+ parse:
+ - [Lib0_1.fastq.gz, Lib0_2.fastq.gz]
+ - [Lib1_1.fastq.gz, Lib1_2.fastq.gz]
+
+# Unused for a local source (no fasterq-dump), kept for schema completeness.
+read_num:
+  10x:
+    R1: 1
+    R2: 2
+  parse:
+    R1: 1
+    R2: 2
+
+# Synthetic mini reference (Index/testsp/ref.*), staged by the generator.
+species: testsp
+
+tech:
+ 10x: 10XV3
+ parse: WT_mini_v3
+
+# One untagged comparison group: 10x vs parse, subsampled to their shared minimum.
+comparisons:
+ - tag: ""
+   tenx: [10x]
+   parse: [parse]

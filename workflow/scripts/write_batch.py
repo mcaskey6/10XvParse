@@ -3,13 +3,12 @@
 One row per library: ``<name>\t<first>\t<second>``. splitcode groups rows sharing
 a name into one sublibrary.
 
-Mirrors utils.multiplex_fastqs' batch writing: when a sublibrary barcode is used
-(``bclen`` set, the Parse case) the barcode read must come first, so R2/R1 are
-swapped; with ``bclen`` None (10x) the order is R1/R2.
+Read order: when a sublibrary barcode is used (``bclen`` set — the Parse case) the
+barcode read must come first, so R2/R1 are swapped; with ``bclen`` None (10x) the
+order is R1/R2.
 
-``params.rows`` is a list of (name, r1, r2) tuples computed source-aware by the
-Snakefile: accession-named dumped FASTQs for SRA/ERA, pre-existing Lib{i} files
-for a local assay.
+``params.rows`` is a list of (name, r1, r2) tuples the Snakefile builds per source:
+accession-named dumped FASTQs for SRA/ERA, the ``local:`` block's files otherwise.
 
 Run as a Snakemake `script:`.
 """

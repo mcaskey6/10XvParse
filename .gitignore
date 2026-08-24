@@ -30,3 +30,5 @@ Configs/10x_info/
 **/Notebooks/barnyard_comparison/10x_data/**
 **/Notebooks/barnyard_comparison/parse_data/**
 .snakemake
+# Generated end-to-end test artifacts (Data/Index are already ignored above)
+Configs/Analysis_test/

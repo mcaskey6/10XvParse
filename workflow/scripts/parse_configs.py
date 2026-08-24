@@ -1,18 +1,19 @@
 """Generate all Parse config files for one assay.
 
-Reuses XvP_utils.preprocessing.parse_config.generate_parse_configs (the barcode
-CSV parsing + onlist/replace/star whitelist logic) and additionally writes the
-three splitcode helper files that the old filter_parse_fastqs / extract_rando_polyt
-functions used to write inline — so the downstream splitcode rules can be pure
-`shell:` steps. Also writes the kb-python x_string to a file for the parse kb
-count rule to read.
+Calls parse_config.generate_parse_configs (the Parse barcode CSV parsing that
+produces the onlist / replace / STAR whitelist / bcs_to_wells files and the
+kb-python x_string), then writes the small splitcode helper files the barcode
+filter/split rules consume — the splitcode config, the round1 keep-group file, and
+the randO/polyT keep file — plus the x_string to its own file for the kb count and
+STAR rules to read. Keeping those here lets the downstream splitcode steps be pure
+`shell:` rules.
 
 Run as a Snakemake `script:` — the injected ``snakemake`` object supplies params
 and outputs.
 """
 from pathlib import Path
 
-from XvP_utils.preprocessing.parse_config import (
+from parse_config import (  # sibling module in workflow/scripts/
     generate_parse_configs,
     sublibrary_barcodes,
     x_string_to_bc1_location,

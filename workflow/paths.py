@@ -1,16 +1,15 @@
 """Filesystem path templates for the 10XvParse Snakemake workflow.
 
-Single source of truth for every path the DAG references, replacing the
-``*Paths`` dataclasses in ``XvP_utils/preprocessing/classes.py``. Each function
-returns a plain string built from the ``Data/{analysis}/{assay}/...`` and
-``Index/{species}/...`` conventions, so it doubles as:
+The single source of truth for every path the workflow reads or writes — edit a
+naming convention here and the whole DAG follows. Each function returns a plain
+string built from the ``Data/{analysis}/{assay}/...`` (per-dataset outputs) and
+``Index/{species}/...`` (shared references) conventions, so the same call serves as:
 
-  * a concrete path — ``processed_fastqs("Analysis_5", "parse")``
-  * a Snakemake rule pattern — ``processed_fastqs("{analysis}", "{assay}")``
+  * a concrete path — ``parse_filtered("Analysis_5", "parse")``
+  * a Snakemake rule pattern — ``parse_filtered("{analysis}", "{assay}")``
 
 All paths are relative to the repository root, which is the Snakemake working
-directory. The templates here are verified against the (soon to be removed)
-``TenXPaths``/``ParsePaths`` classes.
+directory.
 """
 from __future__ import annotations
 
@@ -173,7 +172,7 @@ def tenx_multiplexed(analysis: str, assay: str) -> list[str]:
 
 def hashtags_trimmed_r2(analysis: str, assay: str) -> str:
     """R2 of a hashtag library trimmed to the feature-barcode length (seqtk trimfq).
-    Mirrors utils._trim_r2's ``*_trimmed.fastq.gz`` name next to the multiplexed R2."""
+    Named ``*_trimmed.fastq.gz`` next to the multiplexed R2 it is derived from."""
     return f"{processed_dir(analysis, assay)}/{assay}_1_trimmed.fastq.gz"
 
 
@@ -317,9 +316,78 @@ def parse_randOpolyT_keep_file(analysis: str, assay: str) -> str:
 # cross-assay subsample read-count coupling
 # --------------------------------------------------------------------------- #
 
+# --------------------------------------------------------------------------- #
+# gene-body coverage: STAR index + STARsolo BAMs + reference BED + RSeQC plot
+# --------------------------------------------------------------------------- #
+
+def genome_fasta_unzipped(species: str) -> str:
+    """Uncompressed reference FASTA (STAR genomeGenerate / gffread need it plain)."""
+    return f"{index_dir(species)}/ref.fa"
+
+
+def gtf_unzipped(species: str) -> str:
+    return f"{index_dir(species)}/ref.gtf"
+
+
+def star_index_marker(species: str) -> str:
+    """A file STAR always writes into the genome dir — the STAR index build marker."""
+    return f"{star_index_dir(species)}/genomeParameters.txt"
+
+
+def bed_file(species: str) -> str:
+    return f"{index_dir(species)}/ref.bed"
+
+
+def hk_genes_file(species: str) -> str:
+    return f"{index_dir(species)}/hk_genes.txt"
+
+
+def hk_bed_file(species: str) -> str:
+    return f"{index_dir(species)}/hk_ref.bed"
+
+
+def star_dir(analysis: str, assay: str) -> str:
+    return f"{data_dir(analysis, assay)}/STARsolo"
+
+
+def star_prefix(analysis: str, assay: str, label: str, stag: str = "") -> str:
+    """STAR ``--outFileNamePrefix``. ``label`` is '10x'/'parse'/'polyT'/'randO';
+    ``stag`` tags a multiply-subsampled 10x (empty otherwise), matching the sampled
+    outputs. STAR appends 'Aligned.sortedByCoord.out.bam' etc. to this."""
+    return f"{star_dir(analysis, assay)}/{label}{stag}_"
+
+
+def star_bam(analysis: str, assay: str, label: str, stag: str = "") -> str:
+    return f"{star_prefix(analysis, assay, label, stag)}Aligned.sortedByCoord.out.bam"
+
+
+# STAR CB/UMI positions + whitelist order for a Parse assay, derived from its
+# x_string by scripts/parse_star_params.py.
+def parse_star_positions(analysis: str, assay: str) -> str:
+    return f"{configs_dir(analysis, assay)}/star_cb_positions.txt"
+
+
+def parse_star_umi(analysis: str, assay: str) -> str:
+    return f"{configs_dir(analysis, assay)}/star_umi_position.txt"
+
+
+def parse_star_whitelists(analysis: str, assay: str) -> str:
+    return f"{configs_dir(analysis, assay)}/star_whitelists.txt"
+
+
+def genebody_prefix(analysis: str, tag: str = "") -> str:
+    """geneBody_coverage.py ``-o`` prefix for a comparison group (tag '' -> the
+    plots dir itself, giving '.geneBodyCoverage.*')."""
+    return f"{plots_dir(analysis)}/{tag}"
+
+
+def genebody_marker(analysis: str, tag: str = "") -> str:
+    return f"{genebody_prefix(analysis, tag)}.geneBodyCoverage.txt"
+
+
 def read_counts_file(analysis: str) -> str:
     """One file per analysis holding a ``<fastq> <read_count>`` line for each
     first-read processed FASTQ. Subsample jobs compute their group's minimum on
-    the fly from the relevant lines (matches the old read_counts cache); the file
-    is group-agnostic, so changing comparison groups doesn't invalidate it."""
+    the fly from the relevant lines. The file is group-agnostic, so changing the
+    comparison groups doesn't invalidate it."""
     return f"Data/{analysis}/read_counts.txt"

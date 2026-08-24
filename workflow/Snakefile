@@ -1,14 +1,40 @@
-# 10XvParse preprocessing workflow.
+# 10XvParse — 10x Genomics vs Parse Biosciences preprocessing workflow.
 #
-# Replaces the hand-rolled Scripts/analysisN.py + XvP_utils/preprocessing/pipelines.py
-# orchestration. Steps that are a single command are `shell:` rules; the two
-# genuinely-Python steps (Parse config generation, splitcode batch file) are
-# `script:` rules. Paths come from workflow/paths.py, config parsing from
-# workflow/config_helpers.py, and the config from config/{config,indexes}.yaml.
+# Takes paired 10x and Parse single-cell RNA-seq datasets from raw reads to
+# gene-count matrices (and optional gene-body coverage plots), subsampling the
+# technologies to a matched sequencing depth so they can be compared fairly.
 #
-# Covers Analyses 2–7: 10x vs Parse, human/mouse/barnyard references, SRA/ERA/local
-# sources, hashtag (kite) feature barcodes, and one or two subsample depths.
-# Not yet ported: the gene-body coverage plots (STARsolo + RSeQC).
+# CONFIGURE
+#   config/config.yaml        `threads`, and `analyses:` mapping each analysis
+#                             name to its Configs/<analysis>.yaml.
+#   config/indexes.yaml       per-species reference URLs. A dual-species
+#                             ("barnyard") reference sets `barnyard: true` and adds
+#                             *_2 keys for the second species.
+#   Configs/<analysis>.yaml   one analysis: each assay's technology (`tech:`), read
+#                             source (an `SRA:`/`ERA:`/`local:` block), `species:`,
+#                             optional `read_num:`, `wells:`, `trim:`, and a
+#                             `comparisons:` block listing which 10x/Parse assays
+#                             are subsampled together (and to how many depths).
+#   To add an analysis: write its Configs/<analysis>.yaml and register it under
+#   `analyses:` — no workflow changes needed.
+#
+# RUN
+#   snakemake --workflow-profile workflow/profiles/default <targets>
+#   Targets: `all` (count matrices for every configured analysis), a specific
+#   Data/<analysis>/<assay>/kb_python/<out>/counts_unfiltered/adata.h5ad, or a
+#   gene-body plot Data/<analysis>/Plots/<tag>.geneBodyCoverage.txt.
+#
+# PIPELINE (per assay)
+#   fetch reads -> splitcode remultiplex -> [Parse: barcode filter + polyT/randO
+#   split] -> subsample to the group's shared depth -> kb count (kallisto|bustools)
+#   -> adata.h5ad. Hashtag (feature-barcode) assays instead use a kite index.
+#   Gene-body coverage aligns the subsampled reads with STARsolo and runs RSeQC.
+#
+# LAYOUT
+#   workflow/paths.py           every input/output path (the naming conventions).
+#   workflow/config_helpers.py  reading + interpreting the analysis configs.
+#   workflow/scripts/           the few genuinely-Python steps; every other step is
+#                               a single-command `shell:` rule.
 
 import re
 import sys
@@ -46,8 +72,9 @@ ALL_ASSAYS = sorted({a for cfg in ANALYSES.values() for a in _assays(cfg)})
 TENX_ASSAYS = _assays_of_type("tenx")
 PARSE_ASSAYS = _assays_of_type("parse")
 HASHTAG_ASSAYS = _assays_of_type("hashtags")
-# Both 10x and hashtag libraries multiplex the same way (splitcode --no-outb, no
-# sublibrary barcode); only the pseudoalignment differs.
+# 10x and hashtag libraries carry no sublibrary barcode, so they share the same
+# (barcode-free) remultiplexing rule; they differ only in pseudoalignment (a nac
+# gene index for 10x, a kite feature index for hashtags).
 NOBC_ASSAYS = sorted(set(TENX_ASSAYS) | set(HASHTAG_ASSAYS))
 
 
@@ -60,8 +87,9 @@ PARSE_RE = _re(PARSE_ASSAYS)
 HASHTAG_RE = _re(HASHTAG_ASSAYS)
 NOBC_RE = _re(NOBC_ASSAYS)
 
-# Species split single-species (curl the pair) vs barnyard (build a combined,
-# species-prefixed reference). Keyed off config/indexes.yaml's `barnyard:` flag.
+# A single-species reference is downloaded directly; a barnyard (dual-species) one
+# is built by prefixing and concatenating two species. Which rule applies is chosen
+# by the `barnyard:` flag on the species in config/indexes.yaml.
 BARNYARD_SPECIES = sorted(sp for sp, v in INDEXES.items() if v.get("barnyard"))
 SINGLE_SPECIES = sorted(sp for sp in INDEXES if sp not in BARNYARD_SPECIES)
 BARNYARD_RE = _re(BARNYARD_SPECIES)
@@ -69,13 +97,18 @@ SINGLE_RE = _re(SINGLE_SPECIES)
 
 
 wildcard_constraints:
-    analysis=r"Analysis_\d+",
+    # Any analysis name (the keys under `analyses:` in config/config.yaml); it names a
+    # single path segment, so anything but a path separator. The tightly-constrained
+    # `assay` (a known assay name) keeps Data/{analysis}/{assay}/... unambiguous.
+    analysis=r"[^/]+",
     assay="|".join(map(re.escape, ALL_ASSAYS)) or r"[A-Za-z0-9_]+",
     srr=r"[A-Z]{3}\d+",
     species=r"[a-z_]+",
     kind="polyT|randO",  # the only barcode-split subsample kinds
     read=r"[01]",
     stag=r"(_[A-Za-z0-9]+)?",  # subsample depth token: "" or "_<comparison tag>"
+    tag=r"[A-Za-z0-9]*",       # raw comparison tag ("" for the untagged group)
+    pk=r"parse|polyT|randO",   # parse read subset for a STARsolo BAM
 
 
 # --------------------------------------------------------------------------- #
@@ -246,6 +279,16 @@ def all_targets():
     return targets
 
 
+def genebody_targets():
+    """One gene-body coverage plot per comparison group (its one tenx + one parse)."""
+    targets = []
+    for name, cfg in ANALYSES.items():
+        for comp in ch.comparisons(cfg):
+            if comp.get("tenx") and comp.get("parse"):
+                targets.append(paths.genebody_marker(name, comp.get("tag", "")))
+    return targets
+
+
 rule all:
     input:
         all_targets()
@@ -270,9 +313,10 @@ rule download_reference:
 
 
 rule barnyard_reference:
-    # Dual-species reference: prefix every sequence ID (FASTA) and the seqname
-    # column + gene_id/gene_name attributes (GTF) with the uppercased species
-    # label, then concatenate. Shell port of utils.make_barnyard_reference.
+    # Build a dual-species ("barnyard") reference for species "{sp1}_{sp2}": download
+    # both species, prefix every FASTA sequence ID and the GTF seqname + gene_id /
+    # gene_name with the uppercased species label (e.g. HUMAN_, MOUSE_) so the two
+    # genomes don't collide, then concatenate into one gzipped FASTA + GTF.
     wildcard_constraints:
         species=BARNYARD_RE,
     output:
@@ -329,7 +373,8 @@ rule prefetch:
     wildcard_constraints:
         srr=r"[DS]RR\d+",
     output:
-        sra=paths.sra_file("{analysis}", "{assay}", "{srr}"),
+        # raw download, consumed only by `dump`
+        sra=temp(paths.sra_file("{analysis}", "{assay}", "{srr}")),
     params:
         outdir=lambda wc: paths.sra_dir(wc.analysis, wc.assay),
     shell:
@@ -342,8 +387,9 @@ rule dump:
     input:
         sra=paths.sra_file("{analysis}", "{assay}", "{srr}"),
     output:
-        r1=paths.dumped_fastq("{analysis}", "{assay}", "{srr}", "R1"),
-        r2=paths.dumped_fastq("{analysis}", "{assay}", "{srr}", "R2"),
+        # raw reads, consumed only by multiplexing
+        r1=temp(paths.dumped_fastq("{analysis}", "{assay}", "{srr}", "R1")),
+        r2=temp(paths.dumped_fastq("{analysis}", "{assay}", "{srr}", "R2")),
     params:
         dumped=lambda wc: paths.dumped_dir(wc.analysis, wc.assay),
         tmp=lambda wc: paths.tmp_dir(wc.analysis, wc.assay),
@@ -361,14 +407,15 @@ rule dump:
 
 
 rule download_era:
-    # ENA (ERR accessions): the paired FASTQs are hosted directly on the ENA FTP,
-    # so no prefetch/dump — curl each read to the same dumped-FASTQ names the SRA
-    # path uses, honouring per-sublibrary read-number overrides.
+    # ENA hosts paired FASTQs directly on its FTP, so ERR accessions are downloaded
+    # rather than prefetched/dumped. Reads are written to the same per-accession
+    # FASTQ names the SRA path produces, so multiplexing is source-agnostic.
     wildcard_constraints:
         srr=r"ERR\d+",
     output:
-        r1=paths.dumped_fastq("{analysis}", "{assay}", "{srr}", "R1"),
-        r2=paths.dumped_fastq("{analysis}", "{assay}", "{srr}", "R2"),
+        # raw reads, consumed only by multiplexing
+        r1=temp(paths.dumped_fastq("{analysis}", "{assay}", "{srr}", "R1")),
+        r2=temp(paths.dumped_fastq("{analysis}", "{assay}", "{srr}", "R2")),
     params:
         url1=lambda wc: ch.era_ftp_url(wc.srr, source_read_nums(wc)[0]),
         url2=lambda wc: ch.era_ftp_url(wc.srr, source_read_nums(wc)[1]),
@@ -404,16 +451,19 @@ rule multiplex_tenx:
 
 
 rule multiplex_parse:
-    # Parse prepends a per-sublibrary barcode (--bclen): splitcode embeds it in the
-    # first output, so batch read-order and outputs are both swapped (matching
-    # utils.multiplex_fastqs).
+    # Parse libraries are remultiplexed with a per-sublibrary "4th-round" barcode
+    # (splitcode --bclen), which lets sublibraries share one FASTQ without their
+    # cells colliding. splitcode embeds that barcode in the first output file, so
+    # both the batch read-order and the -o outputs are swapped to put the barcode
+    # read first.
     wildcard_constraints:
         assay=PARSE_RE,
     input:
         batch=paths.batch_file("{analysis}", "{assay}"),
         fastqs=dumped_fastqs,
     output:
-        paths.parse_multiplexed("{analysis}", "{assay}"),
+        # generic-named remultiplex output, consumed only by parse_filter
+        [temp(f) for f in paths.parse_multiplexed("{analysis}", "{assay}")],
     params:
         bclen=lambda wc: ch.assay_bclen(cfg_of(wc), wc.assay),
     threads: THREADS
@@ -473,8 +523,10 @@ rule parse_split:
         config=paths.parse_splitcode_config("{analysis}", "{assay}"),
         keep=paths.parse_randOpolyT_keep_file("{analysis}", "{assay}"),
     output:
-        polyT=paths.parse_split("{analysis}", "{assay}", "polyT"),
-        randO=paths.parse_split("{analysis}", "{assay}", "randO"),
+        # full-depth polyT/randO reads; kb/STAR use the *sampled* versions, so these
+        # are consumed only by subsampling and read counting
+        polyT=[temp(f) for f in paths.parse_split("{analysis}", "{assay}", "polyT")],
+        randO=[temp(f) for f in paths.parse_split("{analysis}", "{assay}", "randO")],
     threads: THREADS
     shell:
         "splitcode -c {input.config} --keep {input.keep} --nFastqs=2 --gzip "
@@ -482,13 +534,16 @@ rule parse_split:
 
 
 # --------------------------------------------------------------------------- #
-# subsampling: shared read-count minimum, then per-read seqtk (each read is its
-# own job so the scheduler can parallelize them)
+# subsampling: within each comparison group, every assay is downsampled to the
+# group's shared minimum read count, so 10x and Parse are compared at equal depth.
+# Read counts are cached once per analysis (read_counts), then each read is a
+# separate seqtk job so they can run in parallel.
 # --------------------------------------------------------------------------- #
 
 rule read_counts:
-    # One "<fastq> <read_count>" line per first-read processed FASTQ. Subsample
-    # jobs take the minimum over their group's files from this (group-agnostic) file.
+    # One "<fastq> <read_count>" line per first-read processed FASTQ, for every
+    # assay in the analysis. Subsample jobs read the minimum over their own group's
+    # files from this; the file itself is group-agnostic.
     input:
         all_first_reads,
     output:
@@ -498,15 +553,14 @@ rule read_counts:
 
 
 rule subsample_main:
-    # One read of the main per-assay subsample (10x multiplexed or parse-filtered)
-    # to its group's depth: the minimum read count over the group's first-read files
-    # (params.group_reads), looked up from the read_counts file. The output carries a
-    # depth token ({stag}) only for a multiply-subsampled assay.
-    # `seqtk sample -2` (two-pass) keeps N reads by index instead of holding the
-    # sampled reads in memory (~5 GB even for a ~640M-read 10x subsample, vs ~225 GB
-    # for the 1-pass reservoir), while selecting the same read set — only the output
-    # order differs, i.e. the sub-0.01% UMI jitter we already tolerate. `threads`
-    # already bounds how many subsample jobs run at once (cores / threads).
+    # Subsample one read of an assay's main FASTQ (10x multiplexed or Parse-filtered)
+    # to its comparison group's depth: the minimum read count over the group's
+    # first-read files (params.group_reads), read from read_counts. The output path
+    # gets a depth token ({stag}) only when the same assay is subsampled at more than
+    # one depth (otherwise the assay directory already keeps depths apart).
+    # `seqtk sample -2` is two-pass: it selects the reads by index rather than
+    # holding them in memory, so even a very deep subsample stays light on RAM. Seed
+    # 42 makes it reproducible. `threads` bounds how many subsample jobs run at once.
     input:
         fastq=main_subsample_source,
         counts=paths.read_counts_file("{analysis}"),
@@ -638,3 +692,194 @@ rule kb_count_hashtags:
         "kb count --workflow kite --overwrite --h5ad -t {threads} "
         "-i {input.index} -g {input.t2g} -x {params.tech} "
         "-o {params.out} {input.fastqs}"
+
+
+# --------------------------------------------------------------------------- #
+# gene-body coverage: STAR index + reference BED + housekeeping filter, then
+# STARsolo BAMs (one 10x + parse/polyT/randO per comparison group) fed to RSeQC's
+# geneBody_coverage.py. Uses the group's SUBSAMPLED reads.
+# --------------------------------------------------------------------------- #
+
+def _pk_kind(pk):
+    # STARsolo parse subset -> the sampled-FASTQ kind ("" for the main parse read).
+    return "" if pk == "parse" else pk
+
+
+def genebody_bams(wc):
+    """The four BAMs for a comparison group's coverage plot: its 10x (tagged only
+    when that 10x is multiply-subsampled) + the parse/polyT/randO subsets."""
+    cfg = cfg_of(wc)
+    comp = ch.group_by_tag(cfg, wc.tag)
+    tenx, parse = comp["tenx"][0], comp["parse"][0]
+    tstag = ch.output_stag(cfg, tenx, wc.tag)
+    return [
+        paths.star_bam(wc.analysis, tenx, "10x", tstag),
+        paths.star_bam(wc.analysis, parse, "parse"),
+        paths.star_bam(wc.analysis, parse, "polyT"),
+        paths.star_bam(wc.analysis, parse, "randO"),
+    ]
+
+
+rule unzip_genome:
+    input:
+        paths.genome_file("{species}"),
+    output:
+        paths.genome_fasta_unzipped("{species}"),
+    shell:
+        "gunzip -kc {input} > {output}"
+
+
+rule unzip_gtf:
+    input:
+        paths.gtf_file("{species}"),
+    output:
+        paths.gtf_unzipped("{species}"),
+    shell:
+        "gunzip -kc {input} > {output}"
+
+
+rule star_index:
+    input:
+        fa=paths.genome_fasta_unzipped("{species}"),
+        gtf=paths.gtf_unzipped("{species}"),
+    output:
+        paths.star_index_marker("{species}"),
+    params:
+        genomedir=lambda wc: paths.star_index_dir(wc.species),
+    threads: THREADS
+    shell:
+        "STAR --runThreadN {threads} --runMode genomeGenerate "
+        "--genomeDir {params.genomedir} --genomeFastaFiles {input.fa} --sjdbGTFfile {input.gtf}"
+
+
+rule gtf_to_bed:
+    input:
+        paths.gtf_unzipped("{species}"),
+    output:
+        paths.bed_file("{species}"),
+    shell:
+        "gffread {input} --bed > {output}"
+
+
+rule housekeeping_genes:
+    # HRT Atlas housekeeping transcript IDs (one or two species). The CSV uses ','
+    # or ';' as delimiter and the transcript ID is column 1; strip the version.
+    output:
+        paths.hk_genes_file("{species}"),
+    params:
+        urls=lambda wc: " ".join(
+            u for u in (INDEXES[wc.species].get("hrt_atlas_url"),
+                        INDEXES[wc.species].get("hrt_atlas_url_2")) if u),
+    shell:
+        r"""for u in {params.urls}; do curl -sSL "$u"; done """
+        r"""| awk -F'[,;]' 'NR>1 || FNR>1 {{split($1,a,"."); if(a[1]!="") print a[1]}}' """
+        r"""| sort -u > {output}"""
+
+
+rule housekeeping_bed:
+    # Subset the reference BED to housekeeping transcripts, stripping any barnyard
+    # HUMAN_/MOUSE_ prefix and version from the BED's transcript id (column 4).
+    input:
+        bed=paths.bed_file("{species}"),
+        hk=paths.hk_genes_file("{species}"),
+    output:
+        paths.hk_bed_file("{species}"),
+    shell:
+        r"""awk 'NR==FNR{{hk[$1]=1; next}} """
+        r"""{{tid=$4; sub(/^HUMAN_/,"",tid); sub(/^MOUSE_/,"",tid); sub(/\..*/,"",tid); """
+        r"""if(tid in hk) print}}' {input.hk} {input.bed} > {output}"""
+
+
+rule parse_star_params:
+    wildcard_constraints:
+        assay=PARSE_RE,
+    input:
+        x_string=paths.parse_x_string("{analysis}", "{assay}"),
+    output:
+        positions=paths.parse_star_positions("{analysis}", "{assay}"),
+        umi=paths.parse_star_umi("{analysis}", "{assay}"),
+        whitelists=paths.parse_star_whitelists("{analysis}", "{assay}"),
+    params:
+        configs_dir=lambda wc: paths.configs_dir(wc.analysis, wc.assay),
+    script:
+        "scripts/parse_star_params.py"
+
+
+rule starsolo_tenx:
+    # STARsolo (CB_UMI_Simple) on a group's subsampled 10x reads. readFilesIn is
+    # cDNA (R2) then barcode (R1). {stag} tags a multiply-subsampled 10x.
+    wildcard_constraints:
+        assay=TENX_RE,
+    input:
+        idx=lambda wc: paths.star_index_marker(SP(wc)),
+        whitelist=lambda wc: paths.tenx_whitelist(ch.technology(cfg_of(wc), wc.assay)),
+        r_cdna=lambda wc: paths.sampled_fastq(wc.analysis, wc.assay, 1, wc.stag),
+        r_bc=lambda wc: paths.sampled_fastq(wc.analysis, wc.assay, 0, wc.stag),
+    output:
+        bam=paths.star_bam("{analysis}", "{assay}", "10x", "{stag}"),
+    params:
+        genomedir=lambda wc: paths.star_index_dir(SP(wc)),
+        prefix=lambda wc: paths.star_prefix(wc.analysis, wc.assay, "10x", wc.stag),
+    threads: THREADS
+    shell:
+        "mkdir -p $(dirname {params.prefix}) && "
+        "STAR --soloType CB_UMI_Simple --soloCBwhitelist {input.whitelist} "
+        "--soloBarcodeReadLength 0 --runThreadN {threads} --genomeDir {params.genomedir} "
+        "--outFileNamePrefix {params.prefix} --readFilesIn {input.r_cdna} {input.r_bc} "
+        "--readFilesCommand zcat --outSAMtype BAM SortedByCoordinate"
+
+
+rule starsolo_parse:
+    # STARsolo (CB_UMI_Complex) on a parse read subset. CB/UMI positions and the
+    # whitelist order come from parse_star_params (derived from the x_string).
+    wildcard_constraints:
+        assay=PARSE_RE,
+    input:
+        idx=lambda wc: paths.star_index_marker(SP(wc)),
+        r0=lambda wc: paths.sampled_fastq(wc.analysis, wc.assay, 0, "", _pk_kind(wc.pk)),
+        r1=lambda wc: paths.sampled_fastq(wc.analysis, wc.assay, 1, "", _pk_kind(wc.pk)),
+        positions=paths.parse_star_positions("{analysis}", "{assay}"),
+        umi=paths.parse_star_umi("{analysis}", "{assay}"),
+        whitelists=paths.parse_star_whitelists("{analysis}", "{assay}"),
+    output:
+        bam=paths.star_bam("{analysis}", "{assay}", "{pk}"),
+    params:
+        genomedir=lambda wc: paths.star_index_dir(SP(wc)),
+        prefix=lambda wc: paths.star_prefix(wc.analysis, wc.assay, wc.pk),
+    threads: THREADS
+    shell:
+        "mkdir -p $(dirname {params.prefix}) && "
+        "STAR --soloType CB_UMI_Complex --soloCBwhitelist $(cat {input.whitelists}) "
+        "--soloCBposition $(cat {input.positions}) --soloUMIposition $(cat {input.umi}) "
+        "--soloBarcodeReadLength 0 --runThreadN {threads} --genomeDir {params.genomedir} "
+        "--outFileNamePrefix {params.prefix} --readFilesIn {input.r0} {input.r1} "
+        "--readFilesCommand zcat --soloCBmatchWLtype 1MM --outSAMtype BAM SortedByCoordinate"
+
+
+rule samtools_index:
+    wildcard_constraints:
+        bam=r".*/STARsolo/[A-Za-z0-9_]+Aligned\.sortedByCoord\.out",
+    input:
+        "{bam}.bam",
+    output:
+        "{bam}.bam.bai",
+    shell:
+        "samtools index {input}"
+
+
+rule genebody_coverage:
+    # RSeQC gene-body coverage over a group's four BAMs, restricted to housekeeping
+    # transcripts (much faster than the full BED). One plot per comparison group.
+    input:
+        bed=lambda wc: paths.hk_bed_file(SP(wc)),
+        bams=genebody_bams,
+        bais=lambda wc: [b + ".bai" for b in genebody_bams(wc)],
+    output:
+        paths.genebody_marker("{analysis}", "{tag}"),
+    params:
+        prefix=lambda wc: paths.genebody_prefix(wc.analysis, wc.tag),
+        plotdir=lambda wc: paths.plots_dir(wc.analysis),
+        bams_csv=lambda wc: ",".join(genebody_bams(wc)),
+    shell:
+        "mkdir -p {params.plotdir} && "
+        "geneBody_coverage.py -r {input.bed} -i {params.bams_csv} -o {params.prefix}"
