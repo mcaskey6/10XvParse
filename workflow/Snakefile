@@ -109,6 +109,7 @@ wildcard_constraints:
     stag=r"(_[A-Za-z0-9]+)?",  # subsample depth token: "" or "_<comparison tag>"
     tag=r"[A-Za-z0-9]*",       # raw comparison tag ("" for the untagged group)
     pk=r"parse|polyT|randO",   # parse read subset for a STARsolo BAM
+    tech=r"10X[A-Za-z0-9]+",   # a 10x tech string (10XV3/10XV4) for the barcode whitelist
 
 
 # --------------------------------------------------------------------------- #
@@ -803,6 +804,21 @@ rule parse_star_params:
         generated_dir=lambda wc: paths.generated_dir(wc.analysis, wc.assay),
     script:
         "scripts/parse_star_params.py"
+
+
+rule tenx_whitelist:
+    # STARsolo needs the 10x cell-barcode whitelist as a plain (uncompressed) file.
+    # Rather than committing the ~115 MB lists, obtain each from the gzipped copy
+    # kb-python already ships (via its ngs_tools dependency) and decompress it. This
+    # is the SAME whitelist kb count uses as its barcode-correction on-list, so the
+    # STARsolo and kb-python runs stay consistent by construction. kb_python.config
+    # resolves the installed archive path for a tech string; no download, no manual step.
+    output:
+        paths.tenx_whitelist("{tech}"),
+    shell:
+        r"""archive=$(python -c "from kb_python.config import TECHNOLOGIES_MAPPING as T; """
+        r"""print(T['{wildcards.tech}'].chemistry.whitelist_path)") && """
+        r"""gunzip -c "$archive" > {output}"""
 
 
 rule starsolo_tenx:

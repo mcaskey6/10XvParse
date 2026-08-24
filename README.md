@@ -17,10 +17,9 @@ This repository reproduces and compares published single-cell RNA-seq datasets g
 │   ├── scripts/             # the few Python steps (Parse config gen, batch file, STAR params)
 │   └── profiles/default/    # default run settings (cores)
 ├── Resources/               # committed static inputs
-│   ├── 10x_info/            # 10x kit barcode whitelists for STARsolo (gitignored; added manually)
 │   ├── parse_info/          # Parse kit barcode reference (kits_info.txt + barcodes/*.csv)
 │   └── Analysis_N/<assay>/  # per-assay committed inputs (hashtags.tsv, hto_demultiplexed.csv)
-├── Generated/               # workflow-generated Parse/STAR configs + read_counts.txt (gitignored)
+├── Generated/               # workflow-generated files: Parse/STAR configs, 10x whitelists, read_counts (gitignored)
 ├── Data/                    # FASTQs, count matrices (.h5ad), BAMs, and plots (gitignored)
 ├── Index/                   # kallisto + STAR indices and genome references, by species
 ├── Tests/                   # synthetic end-to-end test + CI environment
