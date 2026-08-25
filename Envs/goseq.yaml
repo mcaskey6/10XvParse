@@ -1,0 +1,24 @@
+# Small R environment for the goseq GO-enrichment step, kept SEPARATE from the main
+# 10XvParse env on purpose: XvP_utils/cross_comparison.py runs goseq through Rscript,
+# and its resolver (_resolve_rscript) looks for an Rscript that can load goseq — in an
+# explicit `rscript=`, then $XVP_RSCRIPT, then PATH, then sibling conda envs. Keeping R
+# here (not in 10XvParse, whose Rscript would otherwise be found first without goseq)
+# is what makes that resolution reliable.
+#
+# Create with:
+#   conda env create -f Envs/goseq.yaml
+# then point XvP at it (or rely on the sibling-env search):
+#   export XVP_RSCRIPT=$CONDA_PREFIX/../goseq/bin/Rscript
+#
+# goseq is the only R package goseq_enrichment.R loads; r-biasedurn is its Wallenius-
+# distribution dependency. Transitive deps (GO.db, genelendatabase, AnnotationDbi, ...)
+# are resolved by conda.
+name: goseq
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - r-base=4.5.3
+  - bioconductor-goseq=1.62.0
+  - r-biasedurn=2.0.12

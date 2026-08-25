@@ -12,7 +12,7 @@ This repository reproduces and compares published single-cell RNA-seq datasets g
 │   └── analysisN.yaml       # one file per analysis (assays, read sources, comparisons)
 ├── Envs/                    # conda environment specs you create by hand
 │   ├── environment.yml      # the 10XvParse env (Snakemake + tools + XvP_utils via pip)
-│   └── edgeR.yaml           # separate R env for goseq / edgeR / limma / EnhancedVolcano
+│   └── goseq.yaml           # small separate R env for the goseq GO-enrichment step
 ├── workflow/                # the Snakemake workflow (self-contained; lowercase by Snakemake convention)
 │   ├── Snakefile            # all rules
 │   ├── paths.py             # every input/output path (the naming conventions)
@@ -61,12 +61,12 @@ conda activate 10XvParse
 
 This provides Snakemake and the command-line tools the workflow calls — `kb-python`, `splitcode`, `sra-tools`, `seqtk`, `pigz`, `STAR`, `samtools`, `gffread`, and RSeQC's `geneBody_coverage.py` — and (via `pip install -e .`) the local `XvP_utils` package the `Notebooks/` import, along with its Python dependencies from `pyproject.toml`. The `workflow/` package itself imports nothing beyond the standard library.
 
-The GO-enrichment step (`XvP_utils.cross_comparison`) runs **goseq** through R, which lives in a separate environment (`bioconductor-goseq`, `edgeR`, `limma`, `EnhancedVolcano`, `biomaRt`) — kept apart so `XvP_utils`' resolver doesn't pick this env's goseq-less `Rscript`:
+The GO-enrichment step (`XvP_utils.cross_comparison`) runs **goseq** through R, which lives in a small separate environment — kept apart so `XvP_utils`' resolver doesn't pick this env's goseq-less `Rscript`:
 
 ```bash
-conda env create -f Envs/edgeR.yaml
+conda env create -f Envs/goseq.yaml
 # point XvP at it (or let the sibling-env search find it):
-export XVP_RSCRIPT=$CONDA_PREFIX/../edgeR/bin/Rscript
+export XVP_RSCRIPT=$CONDA_PREFIX/../goseq/bin/Rscript
 ```
 
 ## Running the Pipeline

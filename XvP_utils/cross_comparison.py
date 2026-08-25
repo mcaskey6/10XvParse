@@ -504,8 +504,9 @@ def _resolve_rscript(rscript: str | Path | None = None) -> str:
     Order: explicit argument -> $XVP_RSCRIPT -> PATH -> sibling conda envs. The last
     step matters because the analysis env may ship its own Rscript *without* goseq, so
     a bare `which` can select the wrong interpreter; goseq typically lives in a separate
-    env (e.g. `edgeR`). An explicit argument or $XVP_RSCRIPT that fails the probe raises
-    rather than silently falling through. The successful result is memoised.
+    env (e.g. `goseq`, from Envs/goseq.yaml). An explicit argument or $XVP_RSCRIPT that
+    fails the probe raises rather than silently falling through. The successful result
+    is memoised.
     """
     global _RSCRIPT_CACHE
 

@@ -14,9 +14,9 @@
 #   conda activate 10XvParse
 #
 # Tool versions are pinned to match the per-rule envs in workflow/envs/. R is kept out
-# of this env on purpose: the notebooks' goseq GO enrichment (and edgeR/limma/
-# EnhancedVolcano) run in a SEPARATE R env — create it from Envs/edgeR.yaml. Keeping R
-# out here is what lets XvP_utils' goseq resolver avoid picking a goseq-less Rscript.
+# of this env on purpose: the notebooks' goseq GO enrichment runs in a small SEPARATE R
+# env — create it from Envs/goseq.yaml. Keeping R out here is what lets XvP_utils' goseq
+# resolver avoid picking a goseq-less Rscript.
 name: 10XvParse
 channels:
   - conda-forge
