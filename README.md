@@ -55,12 +55,14 @@ conda env create -f environment.yml
 conda activate 10XvParse
 ```
 
-This provides Snakemake and the command-line tools the workflow calls — `kb-python`, `splitcode`, `sra-tools`, `seqtk`, `pigz`, `STAR`, `samtools`, `gffread`, and RSeQC's `geneBody_coverage.py`. The `workflow/` package itself imports nothing beyond the standard library.
+This provides Snakemake and the command-line tools the workflow calls — `kb-python`, `splitcode`, `sra-tools`, `seqtk`, `pigz`, `STAR`, `samtools`, `gffread`, and RSeQC's `geneBody_coverage.py` — and (via `pip install -e .`) the local `XvP_utils` package the `Notebooks/` import, along with its Python dependencies from `pyproject.toml`. The `workflow/` package itself imports nothing beyond the standard library.
 
-The `Notebooks/` still import the local `XvP_utils` package; install it in editable mode only if you use them:
+The GO-enrichment step (`XvP_utils.cross_comparison`) runs **goseq** through R, which lives in a separate environment (`bioconductor-goseq`, `edgeR`, `limma`, `EnhancedVolcano`, `biomaRt`) — kept apart so `XvP_utils`' resolver doesn't pick this env's goseq-less `Rscript`:
 
 ```bash
-pip install -e .
+conda env create -f envs/edgeR.yaml
+# point XvP at it (or let the sibling-env search find it):
+export XVP_RSCRIPT=$CONDA_PREFIX/../edgeR/bin/Rscript
 ```
 
 ## Running the Pipeline

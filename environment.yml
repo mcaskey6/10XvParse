@@ -13,10 +13,10 @@
 #   conda env create -f environment.yml
 #   conda activate 10XvParse
 #
-# Tool versions are pinned to match the per-rule envs in workflow/envs/. Not included:
-# R + bioconductor-goseq (only needed for the optional XvP_utils/goseq_enrichment.R;
-# add them if you use it — the Python gseapy path in pyproject.toml covers enrichment
-# otherwise).
+# Tool versions are pinned to match the per-rule envs in workflow/envs/. R is kept out
+# of this env on purpose: the notebooks' goseq GO enrichment (and edgeR/limma/
+# EnhancedVolcano) run in a SEPARATE R env — create it from envs/edgeR.yaml. Keeping R
+# out here is what lets XvP_utils' goseq resolver avoid picking a goseq-less Rscript.
 name: 10XvParse
 channels:
   - conda-forge
