@@ -13,7 +13,6 @@ import urllib.parse
 import gseapy as gp
 from scipy.stats import spearmanr, pearsonr, fisher_exact
 from matplotlib.colors import LogNorm, Normalize
-from upsetty import Upset
 from typing import Tuple
 from . import processing
 from .processing import _warn_unmatched, _load_orthologs, _normalize_gene_name
@@ -890,6 +889,25 @@ def compare_by_de(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
                    fdr_thresh: float = 0.05,
                    n_cooks: int = 10, n_log_ratio: int = 10, min_expr: float = 0.0,
                    label_de: bool = False) -> None:
+    """Overlay differentially-expressed genes onto the four-panel comparison scatter.
+
+    Takes the significant genes (FDR < fdr_thresh) from an edgepy/edgeR result and,
+    on each comparison panel, colors the genes higher in each side and reports a
+    diagonal Fisher test of whether that set sits preferentially off the identity line
+    (i.e. is enriched in one tech). The background is all genes edgeR tested.
+
+    Args:
+        compare_dfs: List of DataFrames from compare_genes, one per comparison pair.
+        comparisons: List of (data_x, data_y) AnnData tuples matching compare_dfs.
+        de_results: edgepy result table with 'gene_name', 'logFC', and 'FDR' columns.
+        de_comparing: (side1, side2) labels; logFC < 0 is higher in side1, > 0 in side2.
+        fdr_thresh: Significance cutoff on FDR for calling a gene differential.
+        n_cooks: Number of top genes by Cook's distance to label.
+        n_log_ratio: Number of top genes by absolute log ratio to label.
+        min_expr: Genes where both normalized_counts are below this value are excluded
+            from the log-ratio ranking.
+        label_de: If True, annotate every differential gene with its name.
+    """
     orthologs = _load_orthologs()
     _norm = lambda name: _normalize_gene_name(name, orthologs)
 
@@ -952,6 +970,28 @@ def compare_by_go(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
                    go_library: str | list[str] | None = None,
                    n_cooks: int = 10, n_log_ratio: int = 10, min_expr: float = 0.0,
                    label_genes: bool = False) -> None:
+    """Overlay genes annotated to one or more GO terms onto the comparison scatter.
+
+    Resolves each requested term to its gene set from the Enrichr GO libraries, then on
+    every comparison panel colors those genes and reports a diagonal Fisher test of
+    whether the set sits preferentially off the identity line. The background is the
+    union of all genes in the loaded GO libraries (the annotatable universe).
+
+    Args:
+        compare_dfs: List of DataFrames from compare_genes, one per comparison pair.
+        comparisons: List of (data_x, data_y) AnnData tuples matching compare_dfs.
+        terms: GO term names or GO IDs to look up and overlay, one color each.
+        go_library: Enrichr GO library name(s) to search; defaults to the module's
+            standard GO libraries when None.
+        n_cooks: Number of top genes by Cook's distance to label.
+        n_log_ratio: Number of top genes by absolute log ratio to label.
+        min_expr: Genes where both normalized_counts are below this value are excluded
+            from the log-ratio ranking.
+        label_genes: If True, annotate the highlighted term genes with their names.
+
+    Raises:
+        ValueError: If none of the requested terms match a library entry.
+    """
     orthologs = _load_orthologs()
     _norm = lambda name: _normalize_gene_name(name, orthologs)
 
@@ -1070,92 +1110,3 @@ def compare(datasets: list[ad.AnnData],
     compare_by_pathway(compare_dfs, comparisons, n_cooks, n_log_ratio, min_expr)
 
     return compare_names, compare_dfs
-
-
-def generate_upset(datasets: list[ad.AnnData], gene_info: pd.DataFrame, cell_thresh: int = 10, n_top_genes: int = -1) -> pd.DataFrame:
-    """Generate an UpSet plot comparing genes expressed across sequencing methods.
-
-    Args:
-        datasets: List of AnnData objects, each with var containing 'n_cells',
-            'percent_counts', and 'gene_id', and uns containing 'name'.
-        gene_info: DataFrame from query_ensembl with a 'gene_id' column.
-        cell_thresh: Minimum number of cells a gene must be detected in to be
-            considered expressed.
-        n_top_genes: If positive, restricts each dataset to its top n genes by
-            percent_counts before building the UpSet membership.
-
-    Returns:
-        DataFrame with one boolean column per dataset indicating gene membership,
-        plus a 'gene_ids' column.
-    """
-    contents = pd.DataFrame()
-
-    for data in datasets:
-        var = data.var[data.var['n_cells'] > cell_thresh]
-        if n_top_genes > 0:
-            top_data = var.sort_values(by='percent_counts', ascending=False).head(1000)
-            mask = (gene_info['gene_id'].isin(top_data['gene_id'])).tolist()
-        else:
-            mask = (gene_info['gene_id'].isin(var['gene_id'])).tolist()
-        contents[str(data.uns['name'])] = mask
-
-    upset = Upset.generate_plot(contents)
-    contents['gene_ids'] = gene_info['gene_id']
-    upset.show()
-    return contents
-
-
-def plot_geneset_metrics(gene_sets: list[pd.Series], set_names: list[str], gene_info: pd.DataFrame) -> None:
-    """Violin plots of gene length and GC content for each gene set.
-
-    Args:
-        gene_sets: List of Series containing gene IDs, one per set to display.
-        set_names: Display labels for each gene set column.
-        gene_info: DataFrame from query_ensembl with 'gene_id', 'gene_length',
-            and 'gc_content' columns.
-    """
-    fig, axs = plt.subplots(2, len(gene_sets), figsize=(12, 10), sharey='row')
-    for ax, data, name in zip(axs[0, :], gene_sets, set_names):
-        lengths = gene_info[gene_info['gene_id'].isin(data)]['gene_length'].tolist()
-        ax.violinplot(np.log10(lengths), showextrema=False, showmedians=True)
-        ax.set_title(name, fontsize=10)
-        ax.set_xticks([])
-
-    for ax, data, name in zip(axs[1, :], gene_sets, set_names):
-        gcs = gene_info[gene_info['gene_id'].isin(data)]['gc_content'].tolist()
-        ax.violinplot(gcs, showextrema=False, showmedians=True)
-        ax.set_title(name, fontsize=10)
-        ax.set_xticks([])
-
-    axs[0, 0].set_ylabel('Gene Length (by order of magnitude)')
-    axs[1, 0].set_ylabel('Percent GC Content')
-
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_genetype_counts(gene_sets: list[pd.Series], set_names: list[str], cols: list[str],
-                         col_names: list[str], color: list[str], gene_info: pd.DataFrame) -> None:
-    """Bar plots showing gene type counts for each gene set.
-
-    Args:
-        gene_sets: List of Series containing gene IDs, one per set to display.
-        set_names: Display labels for each panel.
-        cols: gene_info boolean columns to sum (e.g. 'is_pc', 'is_mito').
-        col_names: Bar labels corresponding to each column in cols.
-        color: Bar colors corresponding to each column in cols.
-        gene_info: DataFrame from query_ensembl with 'gene_id' and the columns
-            listed in cols.
-    """
-    fig, axs = plt.subplots(1, len(gene_sets), figsize=(25, 5))
-    for ax, data, name in zip(axs, gene_sets, set_names):
-        sums = []
-        for col in cols:
-            sums.append(gene_info[col][gene_info['gene_id'].isin(data)].sum())
-        ax.bar(col_names, sums, color=color)
-        ax.set_title(name, fontsize=10)
-
-    axs[0].set_ylabel('Number of Genes In Intersection')
-
-    plt.tight_layout()
-    plt.show()

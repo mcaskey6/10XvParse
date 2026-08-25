@@ -15,10 +15,8 @@ dependencies = [
     "matplotlib",
     "scrublet",
     "scanpy",
-    "pybiomart",
+    "biopython",
     "scipy",
-    "upsetty",
-    "openpyxl",
     "gseapy",
     "statsmodels",
     "networkx"

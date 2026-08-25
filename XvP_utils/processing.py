@@ -8,7 +8,6 @@ import json
 import subprocess
 import os
 from Bio import SeqIO
-import scrublet as scr
 import statsmodels.api as sm
 from scipy.stats import gaussian_kde, entropy
 import pandas as pd
@@ -722,75 +721,6 @@ def update_gene_info(gene_info: pd.DataFrame, datasets: list[ad.AnnData], path: 
     gene_info = gene_info.fillna(0)
     gene_info.to_csv(path)
     return gene_info
-
-
-def detect_doublets(datasets: list[ad.AnnData]) -> list[scr.Scrublet]:
-    """Score and flag doublets in each dataset using Scrublet.
-
-    Results are stored in each AnnData's obs as 'doublet_score' and
-    'predicted_doublet'.
-
-    Args:
-        datasets: List of AnnData objects to process.
-
-    Returns:
-        List of fitted Scrublet objects, one per dataset.
-    """
-    def doublet_detection(data):
-        scrub = scr.Scrublet(data.X, random_state=42)
-        doublet_scores, predicted_doublets = scrub.scrub_doublets()
-        data.obs['doublet_score'] = doublet_scores
-        data.obs['predicted_doublet'] = predicted_doublets
-        return data, scrub
-
-    scrubs = []
-    for data in datasets:
-        data, scrub = doublet_detection(data)
-        scrubs.append(scrub)
-    return scrubs
-
-# Export bulk counts for H2 to compare with bulk RNA-seq data.
-def export_bulk_counts(datasets: list[ad.AnnData], sample: str = None):
-    """Aggregate counts across all cells in each dataset and export to a TSV file for comparison with edgeR. 
-    Output file is bulk_counts/bulk_counts.tsv, or bulk_counts/<sample>_bulk_counts.tsv if a sample name is provided.
-
-    Args:
-        datasets: List of AnnData objects to process. Expects datasets[0] to be 10x and datasets[3] to be Parse.
-        sample: Optional sample identifier to append to output file. If None, defaults to "bulk_counts.tsv". 
-                If provided, output file is "<sample>_bulk_counts.tsv".
-    """
-
-    if sample:
-        sample_str = f"_{sample}"
-    else:        
-        sample_str = ""
-
-    bulk_10x_df = pd.DataFrame({
-        "gene_id":   datasets[0].var["gene_id"].values,
-        "gene_name": datasets[0].var_names,
-        f"tenx":   np.asarray(datasets[0].X.sum(axis=0)).flatten().astype(int)})
-    
-    bulk_parse_df = pd.DataFrame({
-        "gene_id":   datasets[3].var["gene_id"].values,
-        "gene_name": datasets[3].var_names,
-        f"parse":  np.asarray(datasets[3].X.sum(axis=0)).flatten().astype(int)})
-    
-    bulk_df = pd.merge(bulk_10x_df, bulk_parse_df, on=["gene_id", "gene_name"], how="outer")
-    bulk_df.fillna(0, inplace=True)
-
-    bulk_counts_dir = Path("bulk_counts")
-    bulk_counts_dir.mkdir(exist_ok=True)
-
-    if sample:
-        bulk_counts_file = bulk_counts_dir / f"{sample}_bulk_counts.tsv"
-    else:
-        bulk_counts_file = bulk_counts_dir / f"bulk_counts.tsv"
-
-    bulk_df.to_csv(bulk_counts_file, sep="\t", index=False)
-
-    print(f"Exported {len(datasets[0].var)} genes")
-    print(f"\ttenx{sample_str} total counts: {bulk_10x_df['tenx'].sum():,}  ({datasets[0].n_obs:,} cells)")
-    print(f"\tparse{sample_str} total counts: {bulk_parse_df['parse'].sum():,}  ({datasets[3].n_obs:,} cells)")
 
 
 def compare_genes(data_x: ad.AnnData, data_y: ad.AnnData, comparison_axis: str="normalized_counts") -> pd.DataFrame:

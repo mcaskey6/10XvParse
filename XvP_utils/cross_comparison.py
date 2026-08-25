@@ -3,7 +3,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-from upsetty import Upset
 import gseapy as gp
 import matplotlib
 import matplotlib.patches as mpatches
@@ -26,6 +25,25 @@ import scclr
 from scipy import sparse
 
 def load_cross_comparison_data(samples: list[tuple[str, str, str, str, str]], comparison: dict[str, str], project_dir:Path)->pd.DataFrame:
+    """Build a combined bulk-count matrix across samples for a two-tech comparison.
+
+    Loads each sample's two h5ad matrices (one per side of ``comparison``) via
+    init_processing, sums counts across cells to a per-gene bulk total, and assembles a
+    genes x (sample x side) DataFrame. An inner join keeps only genes detected in every
+    column; all-zero genes are dropped. Also creates the ``<side>_outliers/`` output
+    directories the downstream plotting helpers expect.
+
+    Args:
+        samples: (label, analysis_name, tenx_assay, parse_assay) tuples, one per sample.
+        comparison: Ordered (side1, side2) mapping of the two tech names to compare; the
+            key selects which assay of each sample is loaded ("10x" -> tenx_assay, else
+            parse_assay).
+        project_dir: Repository root passed through to init_processing.
+
+    Returns:
+        DataFrame of bulk counts (genes x samples*sides) with genes present in all
+        samples, columns named ``<label>_<side>``.
+    """
     side1, side2 = comparison
 
     # Output dirs expected by the shared plotting helpers
@@ -60,6 +78,18 @@ def load_cross_comparison_data(samples: list[tuple[str, str, str, str, str]], co
     return combined
 
 def scclr_pca(combined: pd.DataFrame, labels: list[str], comparing: dict[str,str]):
+    """Plot a 2-component scclr PCA of the per-sample bulk profiles.
+
+    Splits the combined matrix by side, scclr-normalizes each side separately,
+    stacks them, and runs a 2-component PCA; the scatter is annotated with the sample
+    labels and axis titles carry the percent variance explained.
+
+    Args:
+        combined: Bulk-count matrix from load_cross_comparison_data (genes x columns,
+            columns suffixed with the side name).
+        labels: Point labels for the samples, in the row order of the stacked matrix.
+        comparing: Ordered (side1, side2) tech names; columns are split by these suffixes.
+    """
     side1, side2 = comparing
 
     comb_T = combined.T
@@ -91,6 +121,23 @@ def scclr_pca(combined: pd.DataFrame, labels: list[str], comparing: dict[str,str
     plt.show()
 
 def perform_edgepy(combined: pd.DataFrame, comparing: dict[str, str], samples: list[tuple[str, str, str, str, str]]) -> Tuple[Any, Any, Any, Any, Any]:
+    """Run an edgeR (edgepy) quasi-likelihood GLM test of the tech effect.
+
+    TMM-normalizes the bulk matrix, fits ``~analyses + tech`` (so the tech coefficient is
+    adjusted for analysis-of-origin), filters low-count genes with filterByExpr,
+    estimates dispersion, and runs a quasi-likelihood F-test on the tech coefficient.
+    The full topTags table is written to ``results.csv``.
+
+    Args:
+        combined: Bulk-count matrix from load_cross_comparison_data (genes x samples).
+        comparing: Ordered (side1, side2) tech names; side2 is the tested contrast level.
+        samples: (label, analysis_name, ...) tuples supplying each column's analysis;
+            column order is the side1 block of all samples then the side2 block.
+
+    Returns:
+        Tuple (dge_f, fit, qlf, design, results): the filtered DGEList, the GLM fit, the
+        F-test object, the design matrix, and the BH-adjusted results table.
+    """
     side1, side2 = comparing
     
     labels      = [s[0] for s in samples]
@@ -151,6 +198,25 @@ def volcano_plot(results: pd.DataFrame, comparing: dict[str, str], fdr_thresh: f
                  highlight_genes: list[str] | None = None,
                  highlight_label: str = "outside DE",
                  annotate: bool = True):
+    """Volcano plot (logFC vs -log10 FDR) of an edgepy differential-expression result.
+
+    Colors genes significant (FDR < fdr_thresh) and higher in each side, labels the top
+    hits per side, and optionally overlays extra gene groups: marker genes from a CSV,
+    Enrichr gene-set / GO-term members, or an explicit highlight list (e.g. an outside
+    DE consensus).
+
+    Args:
+        results: edgepy result table with 'gene_name', 'logFC', and 'FDR' columns.
+        comparing: Ordered (side1, side2) tech names; logFC < 0 is higher in side1.
+        fdr_thresh: Significance cutoff drawn as a horizontal threshold line.
+        label_num: Number of top genes per side (by FDR) to annotate.
+        marker_genes_path: Optional CSV of marker genes to highlight.
+        gene_sets: Optional Enrichr gene-set names whose members are highlighted.
+        terms: Optional GO term names/IDs whose members are highlighted.
+        highlight_genes: Optional explicit gene list to highlight.
+        highlight_label: Legend label for ``highlight_genes``.
+        annotate: If False, skip the per-gene text labels.
+    """
     side1, side2 = comparing.values()
 
     sig2 = (results["FDR"] < fdr_thresh) & (results["logFC"] > 0)
@@ -318,6 +384,20 @@ def _match_polyA_metric(gene_names: pd.Series, polyA_path: str | Path,
 
 def plot_differential_metrics(results: pd.DataFrame, comparing: dict[str, str], fdr_thresh: float,
                               polyA_path: str | Path | None = None):
+    """Scatter logFC against gene properties, with a per-panel line of best fit.
+
+    One panel each for median transcript length (log10) and GC content, plus an optional
+    internal poly-A run-density panel when ``polyA_path`` is given; genes are colored by
+    significance/direction and each panel carries an OLS fit of logFC on that property.
+
+    Args:
+        results: edgepy result table with 'gene_name', 'logFC', 'FDR', 'gene_length',
+            and 'gc_content' columns.
+        comparing: Ordered (side1, side2) tech names for the axis/legend labels.
+        fdr_thresh: Significance cutoff separating colored from n.s. (grey) genes.
+        polyA_path: Optional path to an internal-priming table; when given, adds an
+            A-run density panel (matched to gene_name, SNR >= 8, zero-density dropped).
+    """
     side1, side2 = comparing.values()
 
     sig = results["FDR"] < fdr_thresh
@@ -365,6 +445,17 @@ def plot_differential_metrics(results: pd.DataFrame, comparing: dict[str, str], 
     plt.show()
 
 def plot_differential_biotype(results: pd.DataFrame, comparing: dict[str, str]):
+    """Violin plot of logFC grouped by gene biotype category.
+
+    Assigns each gene to a single biotype (mito, ribo, pseudo, tf, pc, lnc, or other)
+    from the boolean ``is_*`` flags on ``results`` and draws one logFC violin per
+    category, annotated with per-group counts.
+
+    Args:
+        results: edgepy result table with a 'logFC' column and the boolean biotype flags
+            'is_mito', 'is_ribo', 'is_pseudo', 'is_tf', 'is_pc', 'is_lnc'.
+        comparing: Ordered (side1, side2) tech names for the y-axis label.
+    """
     side1, side2 = comparing.values()
 
     def assign_biotype(row):
@@ -1114,277 +1205,6 @@ def collapse_redundant_terms(
         )
 
     return out
-
-
-def find_sig_prefixes(results: pd.DataFrame, comparing: dict[str, str], fdr_thresh: float, prefix_threshold: int = 5):
-    def extract_prefix(gene_name):
-        # Leading letters up to first digit or hyphen: RPS27→RPS, MT-CO1→MT, ATP5F1A→ATP
-        m = re.match(r'^([A-Z]+)', gene_name)
-        return m.group(1) if m else gene_name
-
-    sig_side1   = results.loc[(results["FDR"] < fdr_thresh) & (results["logFC"] < 0), "gene_name"].tolist()
-    sig_side2 = results.loc[(results["FDR"] < fdr_thresh) & (results["logFC"] > 0), "gene_name"].tolist()
-    sig_genes = (sig_side1, sig_side2)
-
-    for gene_list, side in zip(sig_genes, comparing):
-        gene_list = [g for g in gene_list if not g.startswith("ENSG")]
-        prefixes = pd.Series(gene_list).apply(extract_prefix)
-        prefix_counts = prefixes.value_counts()
-
-        with open(f"{side}_outliers/enriched_prefixes.txt", "w") as f:
-            for prefix in sorted(prefix_counts.index.tolist()):
-                f.write(f"{prefix}\n")
-
-        prefix_counts_filtered = prefix_counts[prefix_counts > prefix_threshold].sort_values(ascending=False)
-
-        fig, ax = plt.subplots(figsize=(8, max(4, len(prefix_counts_filtered) * 0.35)))
-        ax.barh(prefix_counts_filtered.index[::-1], prefix_counts_filtered.values[::-1])
-        ax.set_xlabel(f"Number of genes in {comparing[side]} consistently enriched set")
-        ax.set_title(f"Gene name prefixes (n={len(gene_list)} total, prefixes with >{prefix_threshold} genes)")
-        plt.tight_layout()
-        plt.show()
-        plt.close(fig)
-
-
-# Gene families that are depleted under fixation (cytoplasmic + mitochondrial ribosomal
-# protein genes), as label -> regex on the normalized (uppercased) symbol.
-RIBO_FAMILIES = {
-    "RP (RPL/RPS)":    r"^RP[LS]",
-    "MRP (MRPL/MRPS)": r"^MRP[LS]",
-}
-# OXPHOS subunit families by respiratory complex. ATP synthase (CV) is restricted to
-# ATP5* — a bare ^ATP also matches unrelated ion-transport ATPases and washes out the signal.
-# NB: the ATP5 symbols differ between HGNC vintages (e.g. ATP5B vs ATP5F1B), so ATP5 genes
-# may not match by symbol across datasets even though they're caught within each one.
-OXPHOS_FAMILIES = {
-    "NDUF (CI)":   r"^NDUF",
-    "SDH (CII)":   r"^SDH",
-    "UQCR (CIII)": r"^UQCR",
-    "COX (CIV)":   r"^COX",
-    "ATP5 (CV)":   r"^ATP5",
-}
-_FAMILY_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd",
-                  "#d62728", "#8c564b", "#e377c2", "#17becf"]
-
-
-def _load_outside_consensus(
-    outside_path: str | Path,
-    outside_fdr_thresh: float,
-    outside_comparisons: tuple[str, ...],
-    gene_col: str,
-) -> Tuple[pd.DataFrame, int]:
-    """Load the outside DE sheet and return (consensus_df, n_total).
-
-    The consensus set is genes significant (FDR < outside_fdr_thresh) in *every*
-    comparison in outside_comparisons; ``outside_logFC`` is the mean of the per-comparison
-    logFCs and ``_gene`` is the normalized symbol (duplicates collapsed, strongest |logFC|).
-    """
-    outside = pd.read_excel(outside_path)
-    _ortho = _load_orthologs()
-    outside["_gene"] = outside[gene_col].astype(str).apply(lambda g: _normalize_gene_name(g, _ortho))
-
-    fdr_cols = [f"FDR.{c}" for c in outside_comparisons]
-    lfc_cols = [f"logFC.{c}" for c in outside_comparisons]
-    consensus = outside.loc[(outside[fdr_cols] < outside_fdr_thresh).all(axis=1)].copy()
-    consensus["outside_logFC"] = consensus[lfc_cols].mean(axis=1)
-    consensus = (consensus.reindex(consensus["outside_logFC"].abs()
-                                   .sort_values(ascending=False).index)
-                          .drop_duplicates("_gene"))
-    return consensus, len(outside)
-
-
-def compare_outside_de(
-    results: pd.DataFrame,
-    comparing: dict[str, str],
-    outside_path: str | Path,
-    fdr_thresh: float = 0.01,
-    outside_fdr_thresh: float = 0.05,
-    outside_comparisons: tuple[str, ...] = ("PRO", "BLA", "COL"),
-    gene_col: str = "genes",
-    families: dict[str, str] | None = None,
-) -> pd.DataFrame:
-    """Test whether genes significant in an outside DE analysis correlate with the
-    significant genes of this 10x-vs-Parse analysis.
-
-    The outside file (e.g. an FF-vs-FFPE edgeR result) is expected to hold one sheet
-    with a gene column and, for each comparison ``C`` in ``outside_comparisons``,
-    columns ``logFC.C`` and ``FDR.C``. The "consensus" outside set is the genes
-    significant (FDR < ``outside_fdr_thresh``) in *every* listed comparison; their
-    consensus logFC is the mean of the per-comparison logFCs.
-
-    Produces three outputs:
-      1. A 2x2 overlap contingency (over genes testable in both analyses) + Fisher's
-         exact test for over-representation, shown as an annotated heatmap.
-      2. A logFC concordance scatter (this analysis vs outside) with Pearson/Spearman r.
-      3. Returns the merged per-gene table for further inspection/export.
-
-    Args:
-        results: DataFrame from ``perform_edgepy`` with ``gene_name``, ``logFC``, ``FDR``.
-        comparing: (side1, side2) naming this analysis's two groups.
-        outside_path: Path to the outside DE .xlsx file.
-        fdr_thresh: Significance threshold for this analysis.
-        outside_fdr_thresh: Significance threshold applied to each outside comparison.
-        outside_comparisons: Suffixes of the outside comparison columns to require.
-        gene_col: Name of the gene-symbol column in the outside sheet.
-        families: Optional label -> regex map; matching genes are recolored on the
-            concordance scatter (e.g. ``RIBO_FAMILIES``). None => no family highlight.
-
-    Returns:
-        DataFrame of genes shared between the outside consensus set and this analysis's
-        testable universe, with columns: gene_name, outside_logFC, logFC, FDR, sig_here.
-    """
-    side1, side2 = comparing.values()
-
-    # --- Load outside DE results and build the consensus significant set ---
-    consensus, n_outside = _load_outside_consensus(
-        outside_path, outside_fdr_thresh, outside_comparisons, gene_col)
-    consensus_genes = set(consensus["_gene"])
-
-    print(f"Outside DE: {n_outside} genes loaded; "
-          f"{len(consensus_genes)} significant in all of {list(outside_comparisons)} "
-          f"(FDR < {outside_fdr_thresh}).")
-
-    # --- Restrict to the universe of genes testable in this analysis ---
-    res = results.copy()
-    _ortho = _load_orthologs()
-    res["_gene"] = res["gene_name"].astype(str).apply(lambda g: _normalize_gene_name(g, _ortho))
-    res = res.drop_duplicates("_gene")
-    universe = set(res["_gene"])
-    consensus_in_universe = consensus_genes & universe
-    print(f"This analysis tested {len(universe)} genes; "
-          f"{len(consensus_in_universe)} of the outside consensus genes are testable here.")
-
-    sig_here = set(res.loc[res["FDR"] < fdr_thresh, "_gene"])
-
-    # --- (1) Overlap + Fisher's exact test ---
-    a = len(sig_here & consensus_in_universe)            # sig here & outside
-    b = len(sig_here - consensus_in_universe)            # sig here, not outside
-    c = len(consensus_in_universe - sig_here)            # outside, not sig here
-    d = len(universe) - a - b - c                        # neither
-    table = np.array([[a, b], [c, d]])
-    odds, pval = fisher_exact(table, alternative="greater")
-    expected = len(sig_here) * len(consensus_in_universe) / max(len(universe), 1)
-    print(f"\nOverlap: {a} genes are significant here AND in the outside consensus "
-          f"(expected by chance ≈ {expected:.1f}).")
-    print(f"Fisher's exact (one-sided, enrichment): odds ratio = {odds:.2f}, p = {pval:.3e}")
-
-    fig, ax = plt.subplots(figsize=(4.6, 4))
-    im = ax.imshow(table, cmap="Blues")
-    ax.set_xticks([0, 1]); ax.set_xticklabels(["outside\nconsensus", "not"])
-    ax.set_yticks([0, 1]); ax.set_yticklabels([f"sig here\n(FDR<{fdr_thresh})", "not"])
-    for (i, j), v in np.ndenumerate(table):
-        ax.text(j, i, f"{v:,}", ha="center", va="center",
-                color="white" if v > table.max() / 2 else "black", fontsize=11)
-    ax.set_title(f"Gene overlap (universe n={len(universe):,})\n"
-                 f"OR={odds:.2f}, Fisher p={pval:.2e}", fontsize=9)
-    plt.tight_layout()
-    plt.show()
-    plt.close(fig)
-
-    # --- (2) logFC concordance scatter ---
-    merged = res.merge(consensus[["_gene", "outside_logFC"]], on="_gene", how="inner")
-    merged["sig_here"] = merged["FDR"] < fdr_thresh
-
-    x = merged["outside_logFC"].values
-    y = merged["logFC"].values
-    pear_r, pear_p = pearsonr(x, y)
-    spear_r, spear_p = spearmanr(x, y)
-
-    fig, ax = plt.subplots(figsize=(6, 6), dpi=300)
-    ns_m = ~merged["sig_here"].values
-    ax.scatter(x[ns_m], y[ns_m], s=10, alpha=0.4, color="grey", label="n.s. here")
-    ax.scatter(x[~ns_m], y[~ns_m], s=14, alpha=0.7, color="#d62728",
-               label=f"sig here (FDR<{fdr_thresh})")
-
-    if families:
-        for i, (label, pattern) in enumerate(families.items()):
-            color = _FAMILY_COLORS[i % len(_FAMILY_COLORS)]
-            fam_m = merged["_gene"].str.match(pattern).values
-            ax.scatter(x[fam_m], y[fam_m], s=28, color=color, edgecolors="black",
-                       linewidths=0.4, alpha=0.9, zorder=3,
-                       label=f"{label} (n={int(fam_m.sum())})")
-
-    ax.axhline(0, color="black", linewidth=0.5)
-    ax.axvline(0, color="black", linewidth=0.5)
-    ax.set_xlabel("outside log₂ FC (FFPE / FF, mean over "
-                  f"{','.join(outside_comparisons)})")
-    ax.set_ylabel(f"this analysis log₂ FC ({side2} / {side1})")
-    ax.set_title(f"logFC concordance on {len(merged)} shared genes\n"
-                 f"Pearson r={pear_r:.2f} (p={pear_p:.1e}), "
-                 f"Spearman ρ={spear_r:.2f} (p={spear_p:.1e})", fontsize=9)
-    ax.legend(fontsize=8, markerscale=1.5)
-    plt.tight_layout()
-    plt.show()
-    plt.close(fig)
-
-    return merged[["gene_name", "outside_logFC", "logFC", "FDR", "sig_here"]]
-
-
-def plot_family_logfc(
-    results: pd.DataFrame,
-    comparing: dict[str, str],
-    outside_path: str | Path,
-    families: dict[str, str] = RIBO_FAMILIES,
-    outside_fdr_thresh: float = 0.05,
-    outside_comparisons: tuple[str, ...] = ("PRO", "BLA", "COL"),
-    gene_col: str = "genes",
-) -> None:
-    """Two-panel logFC distribution comparison for selected gene families.
-
-    Left panel: this analysis (logFC = side2 / side1) over all tested genes.
-    Right panel: the outside consensus set (logFC = FFPE / FF, mean over comparisons).
-    Each panel shows a violin + median for every family plus an "all genes" reference,
-    making the family-level shift (e.g. ribosomal depletion under fixation) directly visible.
-
-    Args:
-        results: DataFrame from ``perform_edgepy`` with ``gene_name`` and ``logFC``.
-        comparing: (side1, side2) naming this analysis's two groups.
-        outside_path: Path to the outside DE .xlsx file.
-        families: label -> regex map on the normalized symbol (default ``RIBO_FAMILIES``).
-        outside_fdr_thresh, outside_comparisons, gene_col: passed to the outside loader.
-    """
-    side1, side2 = comparing.values()
-
-    res = results.copy()
-    _ortho = _load_orthologs()
-    res["_gene"] = res["gene_name"].astype(str).apply(lambda g: _normalize_gene_name(g, _ortho))
-    consensus, _ = _load_outside_consensus(
-        outside_path, outside_fdr_thresh, outside_comparisons, gene_col)
-
-    group_labels = list(families) + ["all genes"]
-    panels = [
-        (res, "logFC", f"this analysis  (log₂ FC {side2} / {side1})"),
-        (consensus, "outside_logFC", "outside consensus  (log₂ FC FFPE / FF)"),
-    ]
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
-    for ax, (df, col, title) in zip(axes, panels):
-        masks = [df["_gene"].str.match(p) for p in families.values()] + [pd.Series(True, index=df.index)]
-        vdata = [df.loc[m, col].dropna().values for m in masks]
-        parts = ax.violinplot(vdata, positions=range(len(group_labels)),
-                              showmedians=True, widths=0.7)
-        body_colors = [_FAMILY_COLORS[i % len(_FAMILY_COLORS)]
-                       for i in range(len(families))] + ["#bbbbbb"]
-        for pc, color in zip(parts["bodies"], body_colors):
-            pc.set_facecolor(color); pc.set_alpha(0.6)
-
-        y_top = max((np.max(v) for v in vdata if len(v)), default=1)
-        for pos, (data, m) in enumerate(zip(vdata, masks)):
-            med = np.median(data) if len(data) else float("nan")
-            ax.text(pos, y_top, f"n={len(data)}\nmed={med:+.2f}",
-                    ha="center", va="bottom", fontsize=8)
-
-        ax.axhline(0, color="black", linewidth=0.5)
-        ax.set_xticks(range(len(group_labels)))
-        ax.set_xticklabels(group_labels, rotation=15, ha="right", fontsize=8)
-        ax.set_ylabel("log₂ fold change")
-        ax.set_title(title, fontsize=9)
-
-    plt.suptitle("Ribosomal gene families are depleted under fixation in both analyses",
-                 fontsize=11)
-    plt.tight_layout()
-    plt.show()
-    plt.close(fig)
 
 
 def plot_logfc_lm(results: pd.DataFrame, comparing: dict[str, str]) -> None:
