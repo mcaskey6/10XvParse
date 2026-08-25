@@ -1,0 +1,14 @@
+# Small utilities used by the download / unzip / read-counting / Python-script rules
+# (curl fetches, gunzip/zcat, awk/sed text munging, and the `script:` rules that run
+# workflow/scripts/*.py — which import only the standard library + parse_config).
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.12
+  - curl=8.15.0
+  - gzip
+  - gawk
+  - sed
+  - coreutils

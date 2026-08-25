@@ -1,0 +1,7 @@
+# splitcode: library remultiplexing and Parse barcode filtering / polyT-randO splitting.
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - splitcode=0.30.0

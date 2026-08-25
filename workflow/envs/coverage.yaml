@@ -1,0 +1,10 @@
+# Gene-body coverage tooling: gffread (GTF -> BED), samtools (BAM index), and
+# RSeQC's geneBody_coverage.py.
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - rseqc=5.0.4
+  - gffread=0.12.7
+  - samtools=1.21

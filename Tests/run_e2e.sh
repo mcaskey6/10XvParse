@@ -14,6 +14,11 @@ cd "$ROOT"
 
 CORES="${CORES:-4}"
 
+# With USE_CONDA=1, run each rule in its own per-rule conda env (workflow/envs/*.yaml)
+# so those env specs are exercised too; otherwise use the already-active environment.
+CONDA_FLAGS=()
+if [ -n "${USE_CONDA:-}" ]; then CONDA_FLAGS=(--use-conda); fi
+
 # Everything the test creates, removed up front so each run is clean and repeatable.
 TEST_DIRS=(Data/Analysis_test Index/testsp Generated/Analysis_test)
 
@@ -35,7 +40,7 @@ TARGETS=(
 )
 # `--` terminates the variadic --rerun-triggers so it can't swallow the targets.
 snakemake --configfile Tests/e2e/config.yaml --cores "$CORES" \
-  --rerun-triggers mtime -- "${TARGETS[@]}"
+  "${CONDA_FLAGS[@]}" --rerun-triggers mtime -- "${TARGETS[@]}"
 
 echo "== checking outputs =="
 python Tests/check_outputs.py

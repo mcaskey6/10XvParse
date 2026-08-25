@@ -1,0 +1,7 @@
+# STAR: genome index build and STARsolo alignment for gene-body coverage.
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - star=2.7.11b

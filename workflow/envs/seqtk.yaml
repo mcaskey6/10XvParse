@@ -1,0 +1,9 @@
+# seqtk: read subsampling (`seqtk sample -2`) and R2 trimming (`seqtk trimfq`),
+# with pigz to recompress the output.
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - seqtk=1.2
+  - pigz=2.4

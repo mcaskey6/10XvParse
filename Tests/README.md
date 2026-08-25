@@ -17,6 +17,8 @@ Knobs (environment variables):
 - `CORES` — Snakemake cores (default 4).
 - `KEEP_TEST_OUTPUT=1` — leave the generated `Data/Analysis_test/`, `Index/testsp/`,
   and `Generated/Analysis_test/` in place for inspection (otherwise removed on pass).
+- `USE_CONDA=1` — run each rule in its own per-rule conda env (`workflow/envs/*.yaml`)
+  via `--use-conda`, so those env specs get exercised too (needs conda ≥24.7.1 or mamba).
 
 ## What's here
 

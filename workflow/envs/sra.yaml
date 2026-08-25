@@ -1,0 +1,8 @@
+# SRA download + dump (prefetch, fasterq-dump) and gzip compression of the reads.
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - sra-tools=3.0.3
+  - pigz=2.4

@@ -308,8 +308,12 @@ rule download_reference:
     params:
         fasta_url=lambda wc: INDEXES[wc.species]["fasta"],
         gtf_url=lambda wc: INDEXES[wc.species]["gtf"],
+    log:
+        "Logs/reference/download_reference/{species}.log"
+    conda:
+        "envs/base.yaml"
     shell:
-        "curl -L -f -o {output.fa} {params.fasta_url} && "
+        "exec 2> {log}; curl -L -f -o {output.fa} {params.fasta_url} && "
         "curl -L -f -o {output.gtf} {params.gtf_url}"
 
 
@@ -331,8 +335,12 @@ rule barnyard_reference:
         p1=lambda wc: wc.species.split("_", 1)[0].upper(),
         p2=lambda wc: wc.species.split("_", 1)[1].upper(),
         tmp=lambda wc: f"{paths.index_dir(wc.species)}/tmp",
+    log:
+        "Logs/reference/barnyard_reference/{species}.log"
+    conda:
+        "envs/base.yaml"
     shell:
-        r"""
+        r"""exec 2> {log}; 
         mkdir -p {params.tmp}
         curl -L -f -o {params.tmp}/sp1.fa.gz {params.fasta_url}
         curl -L -f -o {params.tmp}/sp1.gtf.gz {params.gtf_url}
@@ -357,8 +365,12 @@ rule kb_ref:
         nascent=paths.nascent_file("{species}"),
         cdna_fa=paths.cdna_fasta_file("{species}"),
         nascent_fa=paths.nascent_fasta_file("{species}"),
+    log:
+        "Logs/reference/kb_ref/{species}.log"
+    conda:
+        "envs/kb.yaml"
     shell:
-        "kb ref --workflow nac -i {output.index} -g {output.t2g} "
+        "exec 2> {log}; kb ref --workflow nac -i {output.index} -g {output.t2g} "
         "-c1 {output.cdna} -c2 {output.nascent} "
         "-f1 {output.cdna_fa} -f2 {output.nascent_fa} "
         "{input.fa} {input.gtf}"
@@ -378,8 +390,12 @@ rule prefetch:
         sra=temp(paths.sra_file("{analysis}", "{assay}", "{srr}")),
     params:
         outdir=lambda wc: paths.sra_dir(wc.analysis, wc.assay),
+    log:
+        "Logs/{analysis}/prefetch/{assay}_{srr}.log"
+    conda:
+        "envs/sra.yaml"
     shell:
-        "prefetch {wildcards.srr} --max-size u -O {params.outdir}"
+        "exec 2> {log}; prefetch {wildcards.srr} --max-size u -O {params.outdir}"
 
 
 rule dump:
@@ -397,8 +413,12 @@ rule dump:
         r1n=lambda wc: source_read_nums(wc)[0],
         r2n=lambda wc: source_read_nums(wc)[1],
     threads: THREADS
+    log:
+        "Logs/{analysis}/dump/{assay}_{srr}.log"
+    conda:
+        "envs/sra.yaml"
     shell:
-        "mkdir -p {params.tmp} && "
+        "exec 2> {log}; mkdir -p {params.tmp} && "
         "fasterq-dump --outdir {params.dumped} --temp {params.tmp} "
         "--outfile {wildcards.srr}.fasta --split-files --skip-technical -f "
         "{input.sra} --threads {threads} --fasta-unsorted && "
@@ -420,8 +440,12 @@ rule download_era:
     params:
         url1=lambda wc: ch.era_ftp_url(wc.srr, source_read_nums(wc)[0]),
         url2=lambda wc: ch.era_ftp_url(wc.srr, source_read_nums(wc)[1]),
+    log:
+        "Logs/{analysis}/download_era/{assay}_{srr}.log"
+    conda:
+        "envs/base.yaml"
     shell:
-        "curl -L -f -o {output.r1} {params.url1} && "
+        "exec 2> {log}; curl -L -f -o {output.r1} {params.url1} && "
         "curl -L -f -o {output.r2} {params.url2}"
 
 
@@ -432,6 +456,10 @@ rule write_batch:
         rows=library_rows,
         # Parse remultiplexes with a sublibrary barcode; 10x/hashtags do not.
         bclen=lambda wc: ch.assay_bclen(cfg_of(wc), wc.assay),
+    log:
+        "Logs/{analysis}/write_batch/{assay}.log"
+    conda:
+        "envs/base.yaml"
     script:
         "scripts/write_batch.py"
 
@@ -446,8 +474,12 @@ rule multiplex_tenx:
     output:
         paths.tenx_multiplexed("{analysis}", "{assay}"),
     threads: THREADS
+    log:
+        "Logs/{analysis}/multiplex_tenx/{assay}.log"
+    conda:
+        "envs/splitcode.yaml"
     shell:
-        "splitcode --remultiplex --nFastqs=2 --gzip "
+        "exec 2> {log}; splitcode --remultiplex --nFastqs=2 --gzip "
         "-o {output[0]},{output[1]} --no-outb {input.batch} -t {threads}"
 
 
@@ -468,8 +500,12 @@ rule multiplex_parse:
     params:
         bclen=lambda wc: ch.assay_bclen(cfg_of(wc), wc.assay),
     threads: THREADS
+    log:
+        "Logs/{analysis}/multiplex_parse/{assay}.log"
+    conda:
+        "envs/splitcode.yaml"
     shell:
-        "splitcode --remultiplex --nFastqs=2 --gzip "
+        "exec 2> {log}; splitcode --remultiplex --nFastqs=2 --gzip "
         "-o {output[1]},{output[0]} --bclen={params.bclen} {input.batch} -t {threads}"
 
 
@@ -495,6 +531,10 @@ rule parse_configs:
         filtered_prefix=lambda wc: f"{paths.processed_dir(wc.analysis, wc.assay)}/{wc.assay}",
         randO_prefix=lambda wc: f"{paths.processed_dir(wc.analysis, wc.assay)}/randO",
         polyT_prefix=lambda wc: f"{paths.processed_dir(wc.analysis, wc.assay)}/polyT",
+    log:
+        "Logs/{analysis}/parse_configs/{assay}.log"
+    conda:
+        "envs/base.yaml"
     script:
         "scripts/parse_configs.py"
 
@@ -511,8 +551,12 @@ rule parse_filter:
     output:
         paths.parse_filtered("{analysis}", "{assay}"),
     threads: THREADS
+    log:
+        "Logs/{analysis}/parse_filter/{assay}.log"
+    conda:
+        "envs/splitcode.yaml"
     shell:
-        "splitcode -c {input.config} --keep-grp {input.keep} --nFastqs=2 --gzip "
+        "exec 2> {log}; splitcode -c {input.config} --keep-grp {input.keep} --nFastqs=2 --gzip "
         "--no-output --no-outb {input.multiplexed} -t {threads}"
 
 
@@ -529,8 +573,12 @@ rule parse_split:
         polyT=[temp(f) for f in paths.parse_split("{analysis}", "{assay}", "polyT")],
         randO=[temp(f) for f in paths.parse_split("{analysis}", "{assay}", "randO")],
     threads: THREADS
+    log:
+        "Logs/{analysis}/parse_split/{assay}.log"
+    conda:
+        "envs/splitcode.yaml"
     shell:
-        "splitcode -c {input.config} --keep {input.keep} --nFastqs=2 --gzip "
+        "exec 2> {log}; splitcode -c {input.config} --keep {input.keep} --nFastqs=2 --gzip "
         "--no-output --no-outb {input.filtered} -t {threads}"
 
 
@@ -549,8 +597,12 @@ rule read_counts:
         all_first_reads,
     output:
         paths.read_counts_file("{analysis}"),
+    log:
+        "Logs/{analysis}/read_counts.log"
+    conda:
+        "envs/base.yaml"
     shell:
-        r"""for f in {input:q}; do echo "$f $(( $(zcat "$f" | wc -l) / 4 ))"; done > {output}"""
+        r"""exec 2> {log}; for f in {input:q}; do echo "$f $(( $(zcat "$f" | wc -l) / 4 ))"; done > {output}"""
 
 
 rule subsample_main:
@@ -570,8 +622,12 @@ rule subsample_main:
     params:
         group_reads=group_first_reads,
     threads: THREADS
+    log:
+        "Logs/{analysis}/subsample_main/{assay}_{read}{stag}.log"
+    conda:
+        "envs/seqtk.yaml"
     shell:
-        "N=$(for f in {params.group_reads}; do awk -v f=\"$f\" '$1==f{{print $2}}' {input.counts}; done | sort -n | head -1); "
+        "exec 2> {log}; N=$(for f in {params.group_reads}; do awk -v f=\"$f\" '$1==f{{print $2}}' {input.counts}; done | sort -n | head -1); "
         "seqtk sample -2 -s 42 {input.fastq} $N | pigz -p {threads} > {output}"
 
 
@@ -587,8 +643,12 @@ rule subsample_parse_split:
     params:
         group_reads=group_first_reads,
     threads: THREADS
+    log:
+        "Logs/{analysis}/subsample_parse_split/{assay}_{kind}_{read}{stag}.log"
+    conda:
+        "envs/seqtk.yaml"
     shell:
-        "N=$(for f in {params.group_reads}; do awk -v f=\"$f\" '$1==f{{print $2}}' {input.counts}; done | sort -n | head -1); "
+        "exec 2> {log}; N=$(for f in {params.group_reads}; do awk -v f=\"$f\" '$1==f{{print $2}}' {input.counts}; done | sort -n | head -1); "
         "seqtk sample -2 -s 42 {input.fastq} $N | pigz -p {threads} > {output}"
 
 
@@ -611,8 +671,12 @@ rule kb_count_tenx:
         out=lambda wc: paths.kb_out(wc.analysis, wc.assay, wc.leaf),
         tech=lambda wc: ch.technology(cfg_of(wc), wc.assay),
     threads: THREADS
+    log:
+        "Logs/{analysis}/kb_count_tenx/{assay}_{leaf}.log"
+    conda:
+        "envs/kb.yaml"
     shell:
-        "kb count --overwrite --h5ad --workflow=nac -t {threads} "
+        "exec 2> {log}; kb count --overwrite --h5ad --workflow=nac -t {threads} "
         "-i {input.index} -g {input.t2g} -c1 {input.cdna} -c2 {input.nascent} "
         "-x {params.tech} -o {params.out} {input.fastqs}"
 
@@ -633,8 +697,12 @@ rule kb_count_parse:
     params:
         out=lambda wc: paths.kb_out(wc.analysis, wc.assay, wc.leaf),
     threads: THREADS
+    log:
+        "Logs/{analysis}/kb_count_parse/{assay}_{leaf}.log"
+    conda:
+        "envs/kb.yaml"
     shell:
-        "kb count --overwrite --h5ad --workflow=nac --strand=forward --parity=single "
+        "exec 2> {log}; kb count --overwrite --h5ad --workflow=nac --strand=forward --parity=single "
         "-w {input.onlist} -t {threads} -r {input.replace} "
         "-i {input.index} -g {input.t2g} -c1 {input.cdna} -c2 {input.nascent} "
         "-x $(cat {input.x_string}) -o {params.out} {input.fastqs}"
@@ -654,8 +722,12 @@ rule kite_ref:
         index=paths.hashtags_index_file("{analysis}", "{assay}"),
         t2g=paths.hashtags_t2g_file("{analysis}", "{assay}"),
         cdna=paths.hashtags_cdna_fasta_file("{analysis}", "{assay}"),
+    log:
+        "Logs/{analysis}/kite_ref/{assay}.log"
+    conda:
+        "envs/kb.yaml"
     shell:
-        "kb ref --workflow kite --overwrite "
+        "exec 2> {log}; kb ref --workflow kite --overwrite "
         "-i {output.index} -g {output.t2g} -f1 {output.cdna} {input.tsv}"
 
 
@@ -671,8 +743,12 @@ rule trim_r2:
     params:
         n=lambda wc: ch.r2_trim_length(cfg_of(wc), wc.assay),
     threads: THREADS
+    log:
+        "Logs/{analysis}/trim_r2/{assay}.log"
+    conda:
+        "envs/seqtk.yaml"
     shell:
-        "seqtk trimfq -L {params.n} {input.r2} | pigz -p {threads} > {output}"
+        "exec 2> {log}; seqtk trimfq -L {params.n} {input.r2} | pigz -p {threads} > {output}"
 
 
 rule kb_count_hashtags:
@@ -689,8 +765,12 @@ rule kb_count_hashtags:
         out=lambda wc: paths.kb_out(wc.analysis, wc.assay, wc.leaf),
         tech=lambda wc: ch.technology(cfg_of(wc), wc.assay),
     threads: THREADS
+    log:
+        "Logs/{analysis}/kb_count_hashtags/{assay}_{leaf}.log"
+    conda:
+        "envs/kb.yaml"
     shell:
-        "kb count --workflow kite --overwrite --h5ad -t {threads} "
+        "exec 2> {log}; kb count --workflow kite --overwrite --h5ad -t {threads} "
         "-i {input.index} -g {input.t2g} -x {params.tech} "
         "-o {params.out} {input.fastqs}"
 
@@ -726,8 +806,12 @@ rule unzip_genome:
         paths.genome_file("{species}"),
     output:
         paths.genome_fasta_unzipped("{species}"),
+    log:
+        "Logs/reference/unzip_genome/{species}.log"
+    conda:
+        "envs/base.yaml"
     shell:
-        "gunzip -kc {input} > {output}"
+        "exec 2> {log}; gunzip -kc {input} > {output}"
 
 
 rule unzip_gtf:
@@ -735,8 +819,12 @@ rule unzip_gtf:
         paths.gtf_file("{species}"),
     output:
         paths.gtf_unzipped("{species}"),
+    log:
+        "Logs/reference/unzip_gtf/{species}.log"
+    conda:
+        "envs/base.yaml"
     shell:
-        "gunzip -kc {input} > {output}"
+        "exec 2> {log}; gunzip -kc {input} > {output}"
 
 
 rule star_index:
@@ -748,8 +836,12 @@ rule star_index:
     params:
         genomedir=lambda wc: paths.star_index_dir(wc.species),
     threads: THREADS
+    log:
+        "Logs/reference/star_index/{species}.log"
+    conda:
+        "envs/star.yaml"
     shell:
-        "STAR --runThreadN {threads} --runMode genomeGenerate "
+        "exec 2> {log}; STAR --runThreadN {threads} --runMode genomeGenerate "
         "--genomeDir {params.genomedir} --genomeFastaFiles {input.fa} --sjdbGTFfile {input.gtf}"
 
 
@@ -758,8 +850,12 @@ rule gtf_to_bed:
         paths.gtf_unzipped("{species}"),
     output:
         paths.bed_file("{species}"),
+    log:
+        "Logs/reference/gtf_to_bed/{species}.log"
+    conda:
+        "envs/coverage.yaml"
     shell:
-        "gffread {input} --bed > {output}"
+        "exec 2> {log}; gffread {input} --bed > {output}"
 
 
 rule housekeeping_genes:
@@ -771,8 +867,12 @@ rule housekeeping_genes:
         urls=lambda wc: " ".join(
             u for u in (INDEXES[wc.species].get("hrt_atlas_url"),
                         INDEXES[wc.species].get("hrt_atlas_url_2")) if u),
+    log:
+        "Logs/reference/housekeeping_genes/{species}.log"
+    conda:
+        "envs/base.yaml"
     shell:
-        r"""for u in {params.urls}; do curl -sSL "$u"; done """
+        r"""exec 2> {log}; for u in {params.urls}; do curl -sSL "$u"; done """
         r"""| awk -F'[,;]' 'NR>1 || FNR>1 {{split($1,a,"."); if(a[1]!="") print a[1]}}' """
         r"""| sort -u > {output}"""
 
@@ -785,8 +885,12 @@ rule housekeeping_bed:
         hk=paths.hk_genes_file("{species}"),
     output:
         paths.hk_bed_file("{species}"),
+    log:
+        "Logs/reference/housekeeping_bed/{species}.log"
+    conda:
+        "envs/base.yaml"
     shell:
-        r"""awk 'NR==FNR{{hk[$1]=1; next}} """
+        r"""exec 2> {log}; awk 'NR==FNR{{hk[$1]=1; next}} """
         r"""{{tid=$4; sub(/^HUMAN_/,"",tid); sub(/^MOUSE_/,"",tid); sub(/\..*/,"",tid); """
         r"""if(tid in hk) print}}' {input.hk} {input.bed} > {output}"""
 
@@ -802,6 +906,10 @@ rule parse_star_params:
         whitelists=paths.parse_star_whitelists("{analysis}", "{assay}"),
     params:
         generated_dir=lambda wc: paths.generated_dir(wc.analysis, wc.assay),
+    log:
+        "Logs/{analysis}/parse_star_params/{assay}.log"
+    conda:
+        "envs/base.yaml"
     script:
         "scripts/parse_star_params.py"
 
@@ -815,8 +923,12 @@ rule tenx_whitelist:
     # resolves the installed archive path for a tech string; no download, no manual step.
     output:
         paths.tenx_whitelist("{tech}"),
+    log:
+        "Logs/reference/tenx_whitelist/{tech}.log"
+    conda:
+        "envs/kb.yaml"
     shell:
-        r"""archive=$(python -c "from kb_python.config import TECHNOLOGIES_MAPPING as T; """
+        r"""exec 2> {log}; archive=$(python -c "from kb_python.config import TECHNOLOGIES_MAPPING as T; """
         r"""print(T['{wildcards.tech}'].chemistry.whitelist_path)") && """
         r"""gunzip -c "$archive" > {output}"""
 
@@ -837,8 +949,12 @@ rule starsolo_tenx:
         genomedir=lambda wc: paths.star_index_dir(SP(wc)),
         prefix=lambda wc: paths.star_prefix(wc.analysis, wc.assay, "10x", wc.stag),
     threads: THREADS
+    log:
+        "Logs/{analysis}/starsolo_tenx/{assay}{stag}.log"
+    conda:
+        "envs/star.yaml"
     shell:
-        "mkdir -p $(dirname {params.prefix}) && "
+        "exec 2> {log}; mkdir -p $(dirname {params.prefix}) && "
         "STAR --soloType CB_UMI_Simple --soloCBwhitelist {input.whitelist} "
         "--soloBarcodeReadLength 0 --runThreadN {threads} --genomeDir {params.genomedir} "
         "--outFileNamePrefix {params.prefix} --readFilesIn {input.r_cdna} {input.r_bc} "
@@ -863,8 +979,12 @@ rule starsolo_parse:
         genomedir=lambda wc: paths.star_index_dir(SP(wc)),
         prefix=lambda wc: paths.star_prefix(wc.analysis, wc.assay, wc.pk),
     threads: THREADS
+    log:
+        "Logs/{analysis}/starsolo_parse/{assay}_{pk}.log"
+    conda:
+        "envs/star.yaml"
     shell:
-        "mkdir -p $(dirname {params.prefix}) && "
+        "exec 2> {log}; mkdir -p $(dirname {params.prefix}) && "
         "STAR --soloType CB_UMI_Complex --soloCBwhitelist $(cat {input.whitelists}) "
         "--soloCBposition $(cat {input.positions}) --soloUMIposition $(cat {input.umi}) "
         "--soloBarcodeReadLength 0 --runThreadN {threads} --genomeDir {params.genomedir} "
@@ -879,8 +999,12 @@ rule samtools_index:
         "{bam}.bam",
     output:
         "{bam}.bam.bai",
+    log:
+        "Logs/samtools_index/{bam}.log"
+    conda:
+        "envs/coverage.yaml"
     shell:
-        "samtools index {input}"
+        "exec 2> {log}; samtools index {input}"
 
 
 rule genebody_coverage:
@@ -896,6 +1020,10 @@ rule genebody_coverage:
         prefix=lambda wc: paths.genebody_prefix(wc.analysis, wc.tag),
         plotdir=lambda wc: paths.plots_dir(wc.analysis),
         bams_csv=lambda wc: ",".join(genebody_bams(wc)),
+    log:
+        "Logs/{analysis}/genebody_coverage/{tag}.log"
+    conda:
+        "envs/coverage.yaml"
     shell:
-        "mkdir -p {params.plotdir} && "
+        "exec 2> {log}; mkdir -p {params.plotdir} && "
         "geneBody_coverage.py -r {input.bed} -i {params.bams_csv} -o {params.prefix}"

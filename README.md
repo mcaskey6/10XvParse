@@ -85,6 +85,20 @@ snakemake --workflow-profile workflow/profiles/default \
 
 Add `-n` for a dry run (prints the jobs without running them). For a given target the workflow will, as needed: fetch the reads (SRA via `prefetch`/`fasterq-dump`, ENA via FTP, or pre-downloaded local files), build or reuse the kallisto and STAR indices, remultiplex libraries with splitcode, filter/split Parse reads, subsample each comparison group to its shared minimum read count, pseudoalign with `kb count`, and write `.h5ad` matrices under `Data/<analysis>/<assay>/kb_python/`. Gene-body plots align the subsampled reads with STARsolo and run RSeQC.
 
+### Per-rule conda environments
+
+Every rule declares a conda environment (`workflow/envs/*.yaml`, grouped by tool — `kb`, `sra`, `splitcode`, `seqtk`, `star`, `coverage`, and a small `base` for the download/unzip/Python-script rules). Pass `--use-conda` (or `--software-deployment-method conda`) to run each rule in its own pinned environment, which Snakemake creates on first use:
+
+```bash
+snakemake --workflow-profile workflow/profiles/default --use-conda all
+```
+
+Without `--use-conda`, rules run in whatever environment is active (e.g. the `10XvParse` env from `environment.yml`), which must then provide the tools itself.
+
+### Logs
+
+Each job redirects its stderr to a per-job log under `Logs/` (git-ignored): analysis work under `Logs/<analysis>/<rule>/…` and shared reference/index builds under `Logs/reference/<rule>/…`. Snakemake's own run log stays under `.snakemake/log/`; STAR additionally writes its `Log.*` files next to each BAM.
+
 ## Datasets
 
 ### Analysis 2

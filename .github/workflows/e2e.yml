@@ -25,3 +25,27 @@ jobs:
 
       - name: Run end-to-end test
         run: bash Tests/run_e2e.sh
+
+  # Same test, but with --use-conda so Snakemake builds and runs each rule in its
+  # own per-rule env (workflow/envs/*.yaml) — validates those env specs actually
+  # solve. Uses miniforge (conda-forge/bioconda, no Anaconda defaults) so mamba is
+  # available as the conda frontend.
+  e2e-conda:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up miniforge
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          channels: conda-forge,bioconda
+          channel-priority: strict
+          activate-environment: xvp-ci
+          environment-file: Tests/ci-env.yml
+
+      - name: Run end-to-end test with per-rule conda envs
+        run: USE_CONDA=1 bash Tests/run_e2e.sh
