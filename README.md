@@ -10,11 +10,15 @@ This repository reproduces and compares published single-cell RNA-seq datasets g
 │   ├── config.yaml          # thread count + the analyses to build (name -> config file)
 │   ├── indexes.yaml         # per-species reference URLs (+ HRT Atlas URL; barnyard keys)
 │   └── analysisN.yaml       # one file per analysis (assays, read sources, comparisons)
+├── Envs/                    # conda environment specs you create by hand
+│   ├── environment.yml      # the 10XvParse env (Snakemake + tools + XvP_utils via pip)
+│   └── edgeR.yaml           # separate R env for goseq / edgeR / limma / EnhancedVolcano
 ├── workflow/                # the Snakemake workflow (self-contained; lowercase by Snakemake convention)
 │   ├── Snakefile            # all rules
 │   ├── paths.py             # every input/output path (the naming conventions)
 │   ├── config_helpers.py    # reading + interpreting the per-analysis configs
 │   ├── scripts/             # the few Python steps (Parse config gen, batch file, STAR params)
+│   ├── envs/                # per-rule conda envs for `--use-conda` (distinct from Envs/)
 │   └── profiles/default/    # default run settings (cores)
 ├── Resources/               # committed static inputs
 │   ├── parse_info/          # Parse kit barcode reference (kits_info.txt + barcodes/*.csv)
@@ -51,7 +55,7 @@ The source of truth for all barcode sequences is the committed `Resources/parse_
 Dependencies are managed with conda:
 
 ```bash
-conda env create -f environment.yml
+conda env create -f Envs/environment.yml
 conda activate 10XvParse
 ```
 
@@ -60,7 +64,7 @@ This provides Snakemake and the command-line tools the workflow calls — `kb-py
 The GO-enrichment step (`XvP_utils.cross_comparison`) runs **goseq** through R, which lives in a separate environment (`bioconductor-goseq`, `edgeR`, `limma`, `EnhancedVolcano`, `biomaRt`) — kept apart so `XvP_utils`' resolver doesn't pick this env's goseq-less `Rscript`:
 
 ```bash
-conda env create -f envs/edgeR.yaml
+conda env create -f Envs/edgeR.yaml
 # point XvP at it (or let the sibling-env search find it):
 export XVP_RSCRIPT=$CONDA_PREFIX/../edgeR/bin/Rscript
 ```
@@ -95,7 +99,7 @@ Every rule declares a conda environment (`workflow/envs/*.yaml`, grouped by tool
 snakemake --workflow-profile workflow/profiles/default --use-conda all
 ```
 
-Without `--use-conda`, rules run in whatever environment is active (e.g. the `10XvParse` env from `environment.yml`), which must then provide the tools itself.
+Without `--use-conda`, rules run in whatever environment is active (e.g. the `10XvParse` env from `Envs/environment.yml`), which must then provide the tools itself.
 
 ### Logs
 

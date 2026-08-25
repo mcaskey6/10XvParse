@@ -6,7 +6,7 @@
 # goseq) is what makes that resolution reliable.
 #
 # Create with:
-#   conda env create -f envs/edgeR.yaml
+#   conda env create -f Envs/edgeR.yaml
 # then point XvP at it (or rely on the sibling-env search):
 #   export XVP_RSCRIPT=$CONDA_PREFIX/../edgeR/bin/Rscript
 #
