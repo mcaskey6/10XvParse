@@ -36,6 +36,7 @@
 #   workflow/scripts/           the few genuinely-Python steps; every other step is
 #                               a single-command `shell:` rule.
 
+import os
 import re
 import sys
 
@@ -847,7 +848,8 @@ rule star_index:
         "exec 2> {log}; "
         "N=$(awk '!/^>/{{l+=length($0)}} END{{n=int(log(l)/log(2)/2-1); if(n>14)n=14; if(n<1)n=1; print n}}' {input.fa}); "
         "STAR --runThreadN {threads} --runMode genomeGenerate --genomeSAindexNbases $N "
-        "--genomeDir {params.genomedir} --genomeFastaFiles {input.fa} --sjdbGTFfile {input.gtf}"
+        "--genomeDir {params.genomedir} --genomeFastaFiles {input.fa} --sjdbGTFfile {input.gtf} "
+        "--outFileNamePrefix {params.genomedir}/"  # keep STAR's Log.out in the index dir, not cwd
 
 
 rule gtf_to_bed:
@@ -1024,11 +1026,17 @@ rule genebody_coverage:
     params:
         prefix=lambda wc: paths.genebody_prefix(wc.analysis, wc.tag),
         plotdir=lambda wc: paths.plots_dir(wc.analysis),
-        bams_csv=lambda wc: ",".join(genebody_bams(wc)),
+        bams_abs=lambda wc: ",".join(os.path.abspath(b) for b in genebody_bams(wc)),
     log:
         "Logs/{analysis}/genebody_coverage/{tag}.log"
     conda:
         "envs/coverage.yaml"
     shell:
-        "exec 2> {log}; mkdir -p {params.plotdir} && "
-        "geneBody_coverage.py -r {input.bed} -i {params.bams_csv} -o {params.prefix}"
+        # geneBody_coverage.py writes a log.txt into its CWD; run it in a throwaway
+        # temp dir (with absolute input/output paths) so that log never lands in the
+        # repo root and concurrent jobs don't collide, then fold its messages into the
+        # rule log.
+        "exec 2> {log}; mkdir -p {params.plotdir}; root=$(pwd); tmp=$(mktemp -d); "
+        "( cd \"$tmp\" && geneBody_coverage.py -r \"$root/{input.bed}\" "
+        "-i {params.bams_abs} -o \"$root/{params.prefix}\" ); rc=$?; "
+        "cat \"$tmp/log.txt\" >&2 2>/dev/null || true; rm -rf \"$tmp\"; exit $rc"
