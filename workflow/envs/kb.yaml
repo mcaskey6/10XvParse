@@ -1,17 +1,12 @@
 # kb-python (kallisto | bustools): building the kallisto/kite indexes and pseudo-
 # aligning with `kb count`. Also used by tenx_whitelist, which imports kb_python to
 # locate the bundled 10x on-list and gunzips it (hence gzip).
-#
-# kb-python 0.29.3 is pip-only (bioconda jumps from 0.29.4); its wheel bundles the
-# kallisto and bustools binaries it calls, so no separate conda kallisto/bustools
-# is needed.
 channels:
   - conda-forge
   - bioconda
   - nodefaults
 dependencies:
-  - python=3.12
-  - pip
+  - kb-python=0.29.3
+  - kallisto=0.51.1
+  - bustools=0.44.1
   - gzip
-  - pip:
-      - kb-python==0.29.3
