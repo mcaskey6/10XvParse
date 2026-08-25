@@ -27,6 +27,9 @@ EXPECTED = [
     (KB / "parse/kb_python/sampled_randO_out/counts_unfiltered/adata.h5ad", False),
 ]
 
+# The gene-body coverage plot (STAR + RSeQC), checked separately below.
+GENEBODY = KB / "Plots" / ".geneBodyCoverage.txt"
+
 
 def main() -> int:
     failures = []
@@ -46,12 +49,22 @@ def main() -> int:
         if non_empty and (n_obs == 0 or total == 0):
             failures.append(f"EMPTY    {path.relative_to(ROOT)} (obs={n_obs}, sum={total})")
 
+    # Gene-body coverage: a header row + one data row per BAM (10x, parse, polyT, randO).
+    if not GENEBODY.exists():
+        failures.append(f"MISSING  {GENEBODY.relative_to(ROOT)}")
+    else:
+        data_rows = [ln for ln in GENEBODY.read_text().splitlines()
+                     if ln.strip() and not ln.startswith("Percentile")]
+        print(f"OK  {GENEBODY.relative_to(ROOT)}  ({len(data_rows)} coverage rows) [non-empty required]")
+        if len(data_rows) < 4:
+            failures.append(f"INCOMPLETE {GENEBODY.relative_to(ROOT)} ({len(data_rows)} rows, expected 4)")
+
     if failures:
         print("\nFAILED:")
         for f in failures:
             print("  " + f)
         return 1
-    print("\nAll expected h5ads present and valid.")
+    print("\nAll expected outputs present and valid.")
     return 0
 
 

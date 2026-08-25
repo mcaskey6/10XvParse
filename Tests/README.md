@@ -31,6 +31,12 @@ Knobs (environment variables):
 | `run_e2e.sh` | Stages the data, runs the workflow for the test targets, checks the outputs. |
 | `ci-env.yml` | Minimal conda env for CI (Snakemake, kb/kallisto/bustools, splitcode, seqtk, pigz, anndata). |
 
+It also builds the **gene-body coverage** plot end to end: a STAR index of the mini
+reference (with `--genomeSAindexNbases` auto-reduced for the small genome), STARsolo
+alignment of the subsampled 10x and Parse/polyT/randO reads, and RSeQC
+`geneBody_coverage.py`. The `housekeeping_genes` HRT-Atlas download is skipped by
+staging `Index/testsp/hk_genes.txt` (the two transcripts), so this stays network-free.
+
 CI runs `run_e2e.sh` on every push/PR (`.github/workflows/e2e.yml`).
 
 ## How the synthetic data is built
@@ -53,5 +59,5 @@ DAG is wired correctly but that the barcodes are recovered and reads pseudoalign
 
 ## Scope
 
-This covers the count-matrix pipeline (Tier 1). Gene-body coverage (STARsolo + RSeQC)
-and the SRA/ERA download and hashtag/kite paths are not yet exercised here.
+This covers the count-matrix pipeline and the STAR + RSeQC gene-body coverage path.
+The SRA/ERA download and hashtag/kite paths are not yet exercised here.

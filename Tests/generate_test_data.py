@@ -101,6 +101,12 @@ def build_reference() -> dict[str, str]:
                 gtf.write(f"{CHROM}\tsynthetic\texon\t{start}\t{end}\t.\t+\t.\t{attr_t}\n")
                 cdna += genome[start - 1:end]  # 1-based inclusive -> 0-based slice
             cdnas[gene_id] = cdna
+
+    # Pre-stage the housekeeping transcript list (the housekeeping_genes rule's output)
+    # so gene-body coverage skips its HRT-Atlas download: all our transcripts count as
+    # housekeeping, matching the transcript_id gffread writes into the reference BED.
+    tx_ids = [g.replace("gene", "tx") for g in GENES]
+    (index_dir / "hk_genes.txt").write_text("\n".join(tx_ids) + "\n")
     return cdnas
 
 

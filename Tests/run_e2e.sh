@@ -2,11 +2,13 @@
 # End-to-end test for the 10XvParse Snakemake workflow on a tiny synthetic dataset.
 #
 # Stages generated inputs, runs the full pipeline (reference index -> multiplex ->
-# barcode filter/split -> subsample -> kb count) for a test analysis, and asserts the
-# count matrices are produced. Uses only local inputs, so no network / SRA download.
+# barcode filter/split -> subsample -> kb count, plus STAR + RSeQC gene-body coverage)
+# for a test analysis, and asserts the outputs are produced. Uses only local inputs,
+# so no network / SRA download.
 #
 # Requires the workflow tools on PATH (snakemake, kb/kallisto/bustools, splitcode,
-# seqtk, pigz) plus python with anndata — see Tests/ci-env.yml. Run from anywhere.
+# seqtk, pigz, STAR, samtools, gffread, RSeQC) plus python with anndata — see
+# Tests/ci-env.yml. Run from anywhere.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -20,7 +22,7 @@ CONDA_FLAGS=()
 if [ -n "${USE_CONDA:-}" ]; then CONDA_FLAGS=(--use-conda); fi
 
 # Everything the test creates, removed up front so each run is clean and repeatable.
-TEST_DIRS=(Data/Analysis_test Index/testsp Generated/Analysis_test)
+TEST_DIRS=(Data/Analysis_test Index/testsp Index/testsp_STAR Generated/Analysis_test)
 
 cleanup() { rm -rf "${TEST_DIRS[@]}"; }
 trap 'echo "(leaving test artifacts in place for inspection)"' ERR
@@ -37,6 +39,8 @@ TARGETS=(
   Data/Analysis_test/parse/kb_python/sampled_parse_out/counts_unfiltered/adata.h5ad
   Data/Analysis_test/parse/kb_python/sampled_polyT_out/counts_unfiltered/adata.h5ad
   Data/Analysis_test/parse/kb_python/sampled_randO_out/counts_unfiltered/adata.h5ad
+  # Gene-body coverage plot: STAR index -> STARsolo (10x + parse/polyT/randO) -> RSeQC.
+  Data/Analysis_test/Plots/.geneBodyCoverage.txt
 )
 # `--` terminates the variadic --rerun-triggers so it can't swallow the targets.
 snakemake --configfile Tests/e2e/config.yaml --cores "$CORES" \

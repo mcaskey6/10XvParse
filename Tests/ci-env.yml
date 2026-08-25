@@ -1,9 +1,8 @@
 # Conda environment for the end-to-end CI test (Tests/run_e2e.sh). This is a
-# minimal, test-only env — not the full analysis environment. It carries just the
-# tools the Tier-1 pipeline exercises: Snakemake, the kb/kallisto/bustools counter,
-# splitcode, seqtk, pigz, plus anndata for the output check. STAR / gffread / RSeQC
-# / sra-tools are intentionally omitted (gene-body coverage and downloads aren't
-# tested here).
+# test-only env — not the full analysis environment. It carries the tools the test
+# exercises: Snakemake, the kb/kallisto/bustools counter, splitcode, seqtk, pigz, and
+# the gene-body-coverage tools (STAR, samtools, gffread, RSeQC), plus anndata for the
+# output check. sra-tools is omitted (the test uses only local reads, no downloads).
 name: xvp-ci
 channels:
   - conda-forge
@@ -17,6 +16,10 @@ dependencies:
   - splitcode
   - seqtk
   - pigz
+  - star
+  - samtools
+  - gffread
+  - rseqc
   - pyyaml
   - anndata
   - scipy

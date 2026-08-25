@@ -841,7 +841,12 @@ rule star_index:
     conda:
         "envs/star.yaml"
     shell:
-        "exec 2> {log}; STAR --runThreadN {threads} --runMode genomeGenerate "
+        # STAR needs --genomeSAindexNbases reduced for small genomes: the recommended
+        # min(14, log2(genomeLength)/2 - 1). Computed from the FASTA so the same rule
+        # works for a full genome (stays 14) and a tiny test reference alike.
+        "exec 2> {log}; "
+        "N=$(awk '!/^>/{{l+=length($0)}} END{{n=int(log(l)/log(2)/2-1); if(n>14)n=14; if(n<1)n=1; print n}}' {input.fa}); "
+        "STAR --runThreadN {threads} --runMode genomeGenerate --genomeSAindexNbases $N "
         "--genomeDir {params.genomedir} --genomeFastaFiles {input.fa} --sjdbGTFfile {input.gtf}"
 
 
