@@ -9,12 +9,14 @@ This repository reproduces and compares published single-cell RNA-seq datasets g
 ├── Config/                  # Snakemake configuration
 │   ├── config.yaml          # thread count + the analyses to build (name -> config file)
 │   ├── indexes.yaml         # per-species reference URLs (+ HRT Atlas URL; barnyard keys)
-│   └── analysisN.yaml       # one file per analysis (assays, read sources, comparisons)
+│   ├── analysisN.yaml       # one file per analysis (assays, read sources, comparisons)
+│   └── notebooks.yaml       # per-analysis notebook params (knee-plot cutoffs)
 ├── Envs/                    # conda environment specs you create by hand
 │   ├── environment.yml      # the 10XvParse env (Snakemake + tools + XvP_utils via pip)
 │   └── goseq.yaml           # small separate R env for the goseq GO-enrichment step
 ├── workflow/                # the Snakemake workflow (self-contained; lowercase by Snakemake convention)
 │   ├── Snakefile            # all rules
+│   ├── notebooks.smk        # rules that render each notebook to an HTML report
 │   ├── paths.py             # every input/output path (the naming conventions)
 │   ├── config_helpers.py    # reading + interpreting the per-analysis configs
 │   ├── scripts/             # the few Python steps (Parse config gen, batch file, STAR params)
@@ -28,10 +30,11 @@ This repository reproduces and compares published single-cell RNA-seq datasets g
 ├── Index/                   # kallisto + STAR indices and genome references, by species
 ├── Tests/                   # synthetic end-to-end test + CI environment
 ├── Notebooks/               # Jupyter notebooks for downstream analysis and figures
+├── Reports/                 # rendered notebook HTML (gitignored, rebuilt on demand)
 └── XvP_utils/               # plotting/analysis helpers imported by the notebooks
 ```
 
-> The workflow separates **committed static inputs** (`Config/`, `Resources/`) from files it **generates** (`Generated/`, `Data/`). Everything under `Generated/` and `Data/` is git-ignored and rebuilt on demand, so only the true inputs are version-controlled. `XvP_utils` holds the plotting/analysis helpers the notebooks import; it is not used by the workflow, which depends on nothing outside `workflow/`.
+> The workflow separates **committed static inputs** (`Config/`, `Resources/`) from files it **generates** (`Generated/`, `Data/`, `Reports/`). The large derived data — FASTQs, count matrices, BAMs, and the rendered HTML reports — is git-ignored and rebuilt on demand. The small result tables the notebooks write (the per-analysis `Notebooks/**/gene_data/*.csv` and the goseq enrichment CSVs) are kept in version control, so the key results can be inspected on GitHub without rerunning the analysis. `XvP_utils` holds the plotting/analysis helpers the notebooks import; it is not used by the workflow, which depends on nothing outside `workflow/`.
 
 ### Parse barcode config files are auto-generated
 
@@ -90,6 +93,20 @@ snakemake --workflow-profile workflow/profiles/default \
 ```
 
 Add `-n` for a dry run (prints the jobs without running them). For a given target the workflow will, as needed: fetch the reads (SRA via `prefetch`/`fasterq-dump`, ENA via FTP, or pre-downloaded local files), build or reuse the kallisto and STAR indices, remultiplex libraries with splitcode, filter/split Parse reads, subsample each comparison group to its shared minimum read count, pseudoalign with `kb count`, and write `.h5ad` matrices under `Data/<analysis>/<assay>/kb_python/`. Gene-body plots align the subsampled reads with STARsolo and run RSeQC.
+
+### Rendering the notebooks
+
+The downstream analysis notebooks under `Notebooks/` are Snakemake targets too. `notebooks` executes every notebook and renders it to `Reports/<path>.html`, wired to the count matrices it reads so only stale notebooks rerun:
+
+```bash
+snakemake --workflow-profile workflow/profiles/default notebooks   # all of them
+snakemake --workflow-profile workflow/profiles/default \
+  Reports/Analysis_5/combo.html                                    # just one
+```
+
+- Notebooks run in the **active** environment (not `--use-conda`): they import `XvP_utils` plus `edgepython`/`scclr` and shell out to the goseq R env, which the per-rule envs don't carry.
+- Each notebook claims all cores, so they run **one at a time** (they contain heavy, all-core steps).
+- Per-analysis notebook parameters (knee-plot cutoffs) live in `Config/notebooks.yaml`; a notebook reads them via `plotting.notebook_context(analysis, variant)`, with species inherited from the analysis config. A shared per-species annotation cache (`Notebooks/gene_info/<species>/gene_attributes.csv`) is built once by the `gene_attributes` rule.
 
 ### Per-rule conda environments
 
@@ -287,7 +304,16 @@ snakemake --workflow-profile workflow/profiles/default \
 
 ### 5. Add a notebook and update this README
 
-Add a `Notebooks/Analysis_N/` notebook for downstream analysis, and add an entry under **Datasets** above with the paper link, sample description, and accession numbers.
+Add a `Notebooks/Analysis_N/` notebook for downstream analysis. A notebook placed there is **auto-discovered** as a render target — it maps to `Analysis_N` and depends on that analysis's count matrices — so `snakemake Reports/Analysis_N/<name>.html` just works. Have its setup cell read parameters from config rather than hardcoding them:
+
+```python
+from XvP_utils import plotting
+ctx = plotting.notebook_context("Analysis_N")          # add a variant arg if the analysis has variants
+PROJECT_DIR, SPECIES = ctx.project_dir, ctx.species
+CUTOFFS = ctx.knee("sampled", ["10x", "polyT", "randO", "parse"])   # tech notebooks: ctx.knee("full", [...])
+```
+
+Add the analysis's knee-plot cutoffs to `Config/notebooks.yaml` (under `full:`/`sampled:`, keyed by variant if needed). A **cross-analysis** notebook (one that spans several analyses, like those in `Notebooks/Comparisons/`) isn't discovered by folder — register it in the `_COMPARISONS` map in `workflow/notebooks.smk` with the analyses it consumes. Finally, add an entry under **Datasets** above with the paper link, sample description, and accession numbers.
 
 ### Parse sublibraries
 

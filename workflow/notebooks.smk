@@ -11,7 +11,7 @@
 import glob as _glob
 import os as _os
 
-REPORT_DIR = "reports"
+REPORT_DIR = "Reports"
 
 
 def _rel(nb):

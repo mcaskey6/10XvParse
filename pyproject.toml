@@ -13,7 +13,6 @@ dependencies = [
     "pandas",
     "numpy",
     "matplotlib",
-    "scrublet",
     "scanpy",
     "biopython",
     "scipy",
