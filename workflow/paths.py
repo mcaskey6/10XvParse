@@ -355,6 +355,14 @@ def hk_genes_file(species: str) -> str:
     return f"{index_dir(species)}/hk_genes.txt"
 
 
+def gene_attributes(species: str) -> str:
+    """Per-species gene annotation cache (biotype/length/GC) the notebooks read.
+    Written once by the gene_attributes rule via XvP_utils.query_ensembl; the combo
+    and Comparisons notebooks read it (overwrite=False) instead of each rebuilding it.
+    Lives under Notebooks/ because that is where the notebooks' code expects it."""
+    return f"Notebooks/gene_info/{species}/gene_attributes.csv"
+
+
 def hk_bed_file(species: str) -> str:
     return f"{index_dir(species)}/hk_ref.bed"
 

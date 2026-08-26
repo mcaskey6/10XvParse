@@ -40,8 +40,10 @@ dependencies:
   - rseqc=5.0.4
   - curl
 
-  # Notebook kernel (VS Code / Jupyter run the notebooks in this env).
+  # Notebook kernel + headless execution (VS Code / Jupyter interactively; nbconvert
+  # is what the Snakemake `notebooks` rules run to render each notebook to HTML).
   - ipykernel
+  - nbconvert
 
   # XvP_utils + its Python dependencies (anndata, scanpy, pandas, numpy, ... — see
   # pyproject.toml). Installed editable so local edits to the package take effect.

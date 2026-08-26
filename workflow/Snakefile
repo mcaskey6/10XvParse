@@ -258,27 +258,35 @@ def group_first_reads(wc):
 # targets
 # --------------------------------------------------------------------------- #
 
-def all_targets():
+def analysis_h5ads(name):
+    """Every h5ad target for one analysis: each assay's full-depth matrix plus, for
+    every comparison group, the subsampled matrices (10x + parse/polyT/randO). This
+    is the set the analysis's notebooks read, so the notebook render rules depend on
+    it too (a superset of any single notebook's reads — simpler and always correct)."""
+    cfg = ANALYSES[name]
     targets = []
-    for name, cfg in ANALYSES.items():
-        for assay in _assays(cfg):
-            t = ch.assay_type(cfg, assay)
-            if t == "tenx":
-                targets.append(paths.kb_h5ad(name, assay, "10x_out"))
-            elif t == "parse":
-                targets.append(paths.kb_h5ad(name, assay, "parse_out"))
-            elif t == "hashtags":
-                targets.append(paths.kb_h5ad(name, assay, "10x_hashtags_out"))
-        for comp in ch.comparisons(cfg):
-            tag = comp.get("tag", "")
-            for assay in comp.get("tenx", []):
-                ostag = ch.output_stag(cfg, assay, tag)
-                targets.append(paths.kb_h5ad(name, assay, paths.sampled_leaf("10x", ostag)))
-            for assay in comp.get("parse", []):
-                ostag = ch.output_stag(cfg, assay, tag)
-                for k in ("parse", "polyT", "randO"):
-                    targets.append(paths.kb_h5ad(name, assay, paths.sampled_leaf(k, ostag)))
+    for assay in _assays(cfg):
+        t = ch.assay_type(cfg, assay)
+        if t == "tenx":
+            targets.append(paths.kb_h5ad(name, assay, "10x_out"))
+        elif t == "parse":
+            targets.append(paths.kb_h5ad(name, assay, "parse_out"))
+        elif t == "hashtags":
+            targets.append(paths.kb_h5ad(name, assay, "10x_hashtags_out"))
+    for comp in ch.comparisons(cfg):
+        tag = comp.get("tag", "")
+        for assay in comp.get("tenx", []):
+            ostag = ch.output_stag(cfg, assay, tag)
+            targets.append(paths.kb_h5ad(name, assay, paths.sampled_leaf("10x", ostag)))
+        for assay in comp.get("parse", []):
+            ostag = ch.output_stag(cfg, assay, tag)
+            for k in ("parse", "polyT", "randO"):
+                targets.append(paths.kb_h5ad(name, assay, paths.sampled_leaf(k, ostag)))
     return targets
+
+
+def all_targets():
+    return [t for name in ANALYSES for t in analysis_h5ads(name)]
 
 
 def genebody_targets():
@@ -294,6 +302,11 @@ def genebody_targets():
 rule all:
     input:
         all_targets()
+
+
+# Notebook render rules (reports/<path>.html) + the `notebooks` aggregate target.
+# Included here so it can use analysis_h5ads / ANALYSES / paths / ch defined above.
+include: "notebooks.smk"
 
 
 # --------------------------------------------------------------------------- #
@@ -863,6 +876,48 @@ rule gtf_to_bed:
         "envs/coverage.yaml"
     shell:
         "exec 2> {log}; gffread {input} --bed > {output}"
+
+
+# Per-species gene-annotation cache (biotype/length/GC) the notebooks read. Split
+# single vs barnyard like the reference rules: a barnyard species uses
+# query_ensembl_combined. No `conda:` — these import XvP_utils and run in the active
+# env (the 10XvParse env), same as the notebook render rules.
+rule gene_attributes:
+    wildcard_constraints:
+        species=SINGLE_RE,
+    input:
+        gtf=paths.gtf_unzipped("{species}"),
+        cdna=paths.cdna_fasta_file("{species}"),
+        t2g=paths.t2g_file("{species}"),
+    output:
+        paths.gene_attributes("{species}"),
+    params:
+        species=lambda wc: wc.species,
+        index_dir=lambda wc: paths.index_dir(wc.species),
+        barnyard=False,
+    log:
+        "Logs/reference/gene_attributes/{species}.log"
+    script:
+        "scripts/gene_attributes.py"
+
+
+rule gene_attributes_barnyard:
+    wildcard_constraints:
+        species=BARNYARD_RE,
+    input:
+        gtf=paths.gtf_unzipped("{species}"),
+        cdna=paths.cdna_fasta_file("{species}"),
+        t2g=paths.t2g_file("{species}"),
+    output:
+        paths.gene_attributes("{species}"),
+    params:
+        species=lambda wc: wc.species,
+        index_dir=lambda wc: paths.index_dir(wc.species),
+        barnyard=True,
+    log:
+        "Logs/reference/gene_attributes/{species}.log"
+    script:
+        "scripts/gene_attributes.py"
 
 
 rule housekeeping_genes:

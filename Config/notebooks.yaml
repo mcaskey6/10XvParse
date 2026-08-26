@@ -1,0 +1,46 @@
+# Notebook parameters — the per-analysis knobs the notebooks used to hardcode.
+#
+# Loaded by XvP_utils.notebook_context(analysis, variant). Species is NOT here: it
+# is inherited from Config/analysis*.yaml (single source of truth). The values below
+# are the knee-plot filtering cutoffs, keyed by dataset (10x/polyT/randO/parse).
+#
+# Cutoffs split by data DEPTH because different notebooks analyze different data:
+#   full:    full-depth matrices    -> the tech notebooks (parse.ipynb / 10x.ipynb)
+#   sampled: subsampled matrices    -> the combo notebooks
+# Params are constant across all notebooks of an (analysis, variant); a notebook only
+# chooses which analysis/variant it is. Analyses whose sub-experiments genuinely differ
+# (different subsample depth or sample) use `variants:` — a top-level block (e.g. a
+# full-depth parse.ipynb shared across variants) is merged with the chosen variant.
+
+Analysis_2:
+  variants:
+    standard:
+      sampled: {"10x": 1000, polyT: 400, randO: 400, parse: 400}   # combo
+      full:    {parse: 700}                                         # parse.ipynb
+    mini:
+      sampled: {"10x": 1000, polyT: 300, randO: 300, parse: 300}   # combo_mini
+      full:    {parse: 400}                                         # parse_mini.ipynb (full depth)
+
+Analysis_3:
+  full: {parse: 2000}                                               # parse.ipynb (full, spans H1+H2)
+  variants:
+    H1:
+      sampled: {"10x": 600, polyT: 900, randO: 900, parse: 900}    # combo_H1
+    H2:
+      sampled: {"10x": 900, polyT: 900, randO: 900, parse: 900}    # combo_H2
+
+Analysis_4:
+  sampled: {"10x": 1000, polyT: 300, randO: 300, parse: 300}       # combo
+  full:    {"10x": 600, parse: 400}                                 # 10x.ipynb, parse.ipynb
+
+Analysis_5:
+  sampled: {"10x": 300, polyT: 300, randO: 300, parse: 300}        # combo
+  full:    {parse: 500}                                             # parse.ipynb
+
+Analysis_6:
+  sampled: {"10x": 1000, polyT: 400, randO: 400, parse: 400}       # combo
+  full:    {parse: 1000}                                            # parse.ipynb
+
+Analysis_7:
+  sampled: {"10x": 2000, polyT: 900, randO: 900, parse: 900}       # combo
+  full:    {parse: 1500}                                            # parse.ipynb

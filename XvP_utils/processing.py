@@ -14,7 +14,93 @@ import pandas as pd
 import urllib.request
 import urllib.parse
 import io
+import yaml
 import scclr
+
+
+def find_repo_root(start: Path | str | None = None) -> Path:
+    """Locate the 10XvParse repository root by walking up from ``start``.
+
+    The notebooks used to hardcode an absolute ``project_dir``; instead they call
+    this to infer the repo root from their own runtime location, so the tree can be
+    cloned or moved anywhere. Walks up from ``start`` (default: the current working
+    directory) until it finds a directory containing both ``pyproject.toml`` and a
+    ``workflow/`` subdirectory — the markers that identify this repo's root.
+
+    Args:
+        start: Directory to begin the search from; defaults to ``Path.cwd()``.
+
+    Returns:
+        The repository root as a ``Path``.
+
+    Raises:
+        FileNotFoundError: If no ancestor directory carries both markers.
+    """
+    start = Path(start) if start is not None else Path.cwd()
+    for d in (start.resolve(), *start.resolve().parents):
+        if (d / "pyproject.toml").is_file() and (d / "workflow").is_dir():
+            return d
+    raise FileNotFoundError(
+        f"Could not locate the 10XvParse repo root above {start} "
+        "(looking for a directory with both pyproject.toml and workflow/)."
+    )
+
+
+class NotebookContext:
+    """Per-analysis parameters a notebook needs, loaded from config instead of
+    hardcoded. Built by :func:`notebook_context`; carries the repo root, the
+    analysis/variant, the species (inherited from the pipeline config), the species
+    index dir, and the knee-plot cutoffs (split into ``full``/``sampled`` depth)."""
+
+    def __init__(self, root: Path, analysis: str, variant: str | None,
+                 species: str, cutoffs: dict[str, dict[str, int]]):
+        self.root = self.project_dir = Path(root)
+        self.analysis = analysis
+        self.variant = variant
+        self.species = species
+        self.index_dir = self.root / "Index" / species
+        self._cutoffs = cutoffs  # {"full": {name: cut}, "sampled": {name: cut}}
+
+    def knee(self, depth: str, datasets: list[str]) -> list[int]:
+        """Knee-plot cutoffs for ``datasets`` (by name, e.g. ['10x','polyT',...]) at
+        the given ``depth`` ('full' for tech notebooks, 'sampled' for combos), in the
+        order given — ready to pass to ``knee_plot(..., cutoffs=ctx.knee(...))``."""
+        d = self._cutoffs.get(depth, {})
+        return [d[name] for name in datasets]
+
+
+def notebook_context(analysis: str, variant: str | None = None,
+                     repo_root: Path | str | None = None) -> "NotebookContext":
+    """Load a notebook's parameters from config so nothing is hardcoded.
+
+    Species is read from the pipeline config (``Config/analysis*.yaml`` via
+    ``Config/config.yaml``) so it has a single source of truth; the knee-plot cutoffs
+    come from ``Config/notebooks.yaml``, keyed by analysis (and by ``variant`` for
+    analyses whose sub-experiments differ, e.g. Analysis_2 standard/mini, Analysis_3
+    H1/H2). Top-level cutoff blocks (e.g. a full-depth ``parse.ipynb`` shared across
+    variants) are merged with the selected variant's blocks.
+
+    Args:
+        analysis: Analysis name, e.g. "Analysis_5".
+        variant: Sub-experiment token (e.g. "standard"/"mini", "H1"/"H2") when the
+            analysis defines ``variants:``; None otherwise.
+        repo_root: Override for the repo root (default: inferred via find_repo_root).
+
+    Returns:
+        A :class:`NotebookContext`.
+    """
+    root = Path(repo_root) if repo_root is not None else find_repo_root()
+    main = yaml.safe_load((root / "Config" / "config.yaml").read_text())
+    acfg = yaml.safe_load((root / main["analyses"][analysis]).read_text())
+    nb = yaml.safe_load((root / "Config" / "notebooks.yaml").read_text())
+
+    params = nb[analysis]
+    merged = {k: v for k, v in params.items() if k != "variants"}
+    if variant is not None:
+        merged.update(params.get("variants", {}).get(variant, {}))
+    cutoffs = {depth: merged.get(depth, {}) for depth in ("full", "sampled")}
+    return NotebookContext(root, analysis, variant, acfg["species"], cutoffs)
+
 
 _ORTHOLOGS: dict[str, str] | None = None
 

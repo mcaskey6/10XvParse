@@ -17,6 +17,7 @@ dependencies = [
     "scanpy",
     "biopython",
     "scipy",
+    "pyyaml",
     "gseapy",
     "statsmodels",
     "networkx"
