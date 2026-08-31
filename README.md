@@ -197,10 +197,9 @@ The comparison figures in `Notebooks/Comparisons/` use the following experiment 
 | Exp 2a | Analysis_3 (H1) | Frozen PBMC, Donor 1 | Human |
 | Exp 2b | Analysis_3 (H2) | Frozen PBMC, Donor 2 | Human |
 | Exp 3 | Analysis_5 | Frozen PBMC | Human |
-| Exp 4 | Analysis_7 | Frozen PBMC | Human |
-| Exp 5a | Analysis_2 (standard) | Thymocytes | Mouse |
-| Exp 5b | Analysis_2 (mini) | Thymocytes | Mouse |
-| Exp 6 | Analysis_4 | K562/mESC barnyard | Human/Mouse |
+| Exp 4a | Analysis_2 (standard) | Thymocytes | Mouse |
+| Exp 4b | Analysis_2 (mini) | Thymocytes | Mouse |
+| Exp 5 | Analysis_4 | K562/mESC barnyard | Human/Mouse |
 
 ## Adding a New Dataset
 
@@ -307,7 +306,7 @@ snakemake --workflow-profile workflow/profiles/default \
 Add a `Notebooks/Analysis_N/` notebook for downstream analysis. A notebook placed there is **auto-discovered** as a render target — it maps to `Analysis_N` and depends on that analysis's count matrices — so `snakemake Reports/Analysis_N/<name>.html` just works. Have its setup cell read parameters from config rather than hardcoding them:
 
 ```python
-from XvP_utils import plotting
+import XvP_utils as plotting
 ctx = plotting.notebook_context("Analysis_N")          # add a variant arg if the analysis has variants
 PROJECT_DIR, SPECIES = ctx.project_dir, ctx.species
 CUTOFFS = ctx.knee("sampled", ["10x", "polyT", "randO", "parse"])   # tech notebooks: ctx.knee("full", [...])

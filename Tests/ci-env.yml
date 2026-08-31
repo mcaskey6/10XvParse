@@ -20,6 +20,7 @@ dependencies:
   - samtools
   - gffread
   - rseqc
+  - r-base        # geneBody_coverage.py needs Rscript; not all rseqc builds pull R
   - pyyaml
   - anndata
   - scipy

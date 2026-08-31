@@ -12,12 +12,3 @@ from .basic_plots import *       # noqa: F401,F403
 from .parse_plots import *       # noqa: F401,F403
 from .combo_plots import *       # noqa: F401,F403
 from .cross_comparison import *  # noqa: F401,F403
-
-# Backwards compatibility for notebooks written against the old plotting subpackage
-# (`from XvP_utils import plotting` and `from XvP_utils.plotting import ...`): alias
-# this package as `plotting`, both as an attribute (for the former) and as a
-# sys.modules entry (so the latter's submodule lookup resolves here). Remove once
-# those notebook imports are updated to `import XvP_utils as plotting`.
-import sys as _sys
-plotting = _sys.modules[__name__]
-_sys.modules[__name__ + ".plotting"] = plotting

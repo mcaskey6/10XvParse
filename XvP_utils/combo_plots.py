@@ -938,7 +938,7 @@ def compare_by_de(compare_dfs: list[pd.DataFrame], comparisons: list[tuple],
         ]:
             mask = norm_names.isin(gene_set)
             p = _diagonal_fisher(df, mask, background_mask)
-            label = f"{base_label}, {_fmt_p(p)}"
+            label = f"{base_label}"
             cat_scatter_genes(ax, df[mask], pair[0], pair[1],
                               color, label=label, xlim=lim, ylim=lim)
             sub = df[mask]

@@ -6,5 +6,7 @@ channels:
   - nodefaults
 dependencies:
   - rseqc=5.0.4
+  - r-base       # geneBody_coverage.py shells out to Rscript for its plot; some
+                 # rseqc builds don't pull R, so require it explicitly
   - gffread=0.12.7
   - samtools=1.21

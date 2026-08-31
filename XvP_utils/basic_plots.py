@@ -63,6 +63,7 @@ def knee_plot(raw_datasets: list[ad.AnnData], cutoffs: list[int], transform: boo
         ax.set_xlabel("UMI Counts")
         ax.set_ylabel("")
         ax.set_title(raw_data.uns['title'] + " Knee Plot")
+        ax.annotate(f"{num_cells:,.0f} cells", xy=(cutoff, num_cells), xytext=(cutoff*1.5, num_cells*1.5), fontsize=12, color='black')
         print(f"{num_cells:,.0f} cells passed the {cutoff} UMI threshold for {raw_data.uns['title']}")
         data = processing.refilter(raw_data, knee[num_cells], transform=transform)
         datasets.append(data)
