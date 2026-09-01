@@ -19,7 +19,8 @@ dependencies:
   - star
   - samtools
   - gffread
-  - rseqc
+  - rseqc=5.0.4   # pinned: newer rseqc mishandles geneBody_coverage.py's -o prefix
+                  # (writes no .geneBodyCoverage.txt); 5.0.4 matches workflow/envs/coverage.yaml
   - r-base        # geneBody_coverage.py needs Rscript; not all rseqc builds pull R
   - pyyaml
   - anndata

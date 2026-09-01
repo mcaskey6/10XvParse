@@ -6,4 +6,4 @@ channels:
   - nodefaults
 dependencies:
   - seqtk=1.2
-  - pigz=2.4
+  - pigz     # unpinned: conda-forge dropped 2.4; any recent pigz is fine here
