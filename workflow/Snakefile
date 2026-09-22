@@ -289,19 +289,37 @@ def all_targets():
     return [t for name in ANALYSES for t in analysis_h5ads(name)]
 
 
+def analysis_genebody(name):
+    """Gene-body coverage plots for one analysis: one per comparison group that pairs
+    a tenx assay with a parse assay."""
+    cfg = ANALYSES[name]
+    targets = []
+    for comp in ch.comparisons(cfg):
+        if comp.get("tenx") and comp.get("parse"):
+            targets.append(paths.genebody_marker(name, comp.get("tag", "")))
+    return targets
+
+
 def genebody_targets():
     """One gene-body coverage plot per comparison group (its one tenx + one parse)."""
-    targets = []
-    for name, cfg in ANALYSES.items():
-        for comp in ch.comparisons(cfg):
-            if comp.get("tenx") and comp.get("parse"):
-                targets.append(paths.genebody_marker(name, comp.get("tag", "")))
-    return targets
+    return [t for name in ANALYSES for t in analysis_genebody(name)]
 
 
 rule all:
     input:
         all_targets()
+
+
+# Per-analysis convenience targets: build just one analysis's matrices plus its
+# gene-body coverage plots, e.g. `snakemake Analysis_5`. The helper calls are
+# evaluated now (not lambdas), so each rule captures its own analysis.
+for _name in ANALYSES:
+
+    rule:
+        name:
+            _name
+        input:
+            analysis_h5ads(_name) + analysis_genebody(_name)
 
 
 # Notebook render rules (reports/<path>.html) + the `notebooks` aggregate target.
@@ -413,6 +431,11 @@ rule prefetch:
 
 
 rule dump:
+    # fasterq-dump names each split file by its ORIGINAL read position (_1.._N), and
+    # the per-assay `read_num` config selects which positions are R1/R2. We use
+    # --include-technical (not --skip-technical) because some 10x SRA runs flag the
+    # cell-barcode read itself as "technical"; skipping would drop it. Unwanted reads
+    # are just not selected (and the whole set is rm'd at the end).
     wildcard_constraints:
         srr=r"[DS]RR\d+",
     input:
@@ -434,7 +457,7 @@ rule dump:
     shell:
         "exec 2> {log}; mkdir -p {params.tmp} && "
         "fasterq-dump --outdir {params.dumped} --temp {params.tmp} "
-        "--outfile {wildcards.srr}.fasta --split-files --skip-technical -f "
+        "--outfile {wildcards.srr}.fasta --split-files --include-technical -f "
         "{input.sra} --threads {threads} --fasta-unsorted && "
         "pigz -c -p {threads} {params.dumped}/{wildcards.srr}_{params.r1n}.fasta > {output.r1} && "
         "pigz -c -p {threads} {params.dumped}/{wildcards.srr}_{params.r2n}.fasta > {output.r2} && "

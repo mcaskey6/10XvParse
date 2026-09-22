@@ -2,8 +2,7 @@ name: Analysis_5
 
 SRA:
  10x:
- - SRR26594154
- - SRR26594153
+ - SRR28867563
  parse:
   sub1:
   - SRR28867558
@@ -11,8 +10,8 @@ SRA:
 # The suffix for the R1 and R2 FASTA files dumped from fasterq-dump. For some reason these change across datasets
 read_num:
   10x:
-    R1: 1
-    R2: 2
+    R1: 3
+    R2: 4
   parse:
     R1: 2
     R2: 3

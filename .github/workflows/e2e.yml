@@ -15,7 +15,7 @@ jobs:
       run:
         shell: bash -el {0}  # login shell so the conda env is active in each step
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up test environment
         uses: mamba-org/setup-micromamba@v2
@@ -36,13 +36,14 @@ jobs:
       run:
         shell: bash -el {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up miniforge
         uses: conda-incubator/setup-miniconda@v3
         with:
           miniforge-version: latest
           channels: conda-forge,bioconda
+          conda-remove-defaults: "true"   # we use conda-forge/bioconda only; drop the implicit defaults channel
           channel-priority: strict
           activate-environment: xvp-ci
           environment-file: Tests/ci-env.yml

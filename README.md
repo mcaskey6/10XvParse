@@ -163,7 +163,7 @@ Sample: Frozen *Homo sapiens* PBMCs
 
 Datasets (find [here](https://www.ncbi.nlm.nih.gov/sra?term=SRP505235)):
 - SRR28867558: Parse Evercode WT v2
-- SRR28867563 and SRR28867562: 10x Next Gem v3.1, technical replicates 1 and 2
+- SRR28867563 and SRR28867562: 10x Next Gem v3.1, technical replicate 1
 
 ### Analysis 6
 From: [Comparison of high-throughput single-cell RNA-seq methods for ex vivo drug screening](https://academic.oup.com/nargab/article/6/1/lqae001/7591100?login=true#460158720)

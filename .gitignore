@@ -32,3 +32,4 @@
 .snakemake
 **/Generated/**
 Reports/
+CLAUDE.md

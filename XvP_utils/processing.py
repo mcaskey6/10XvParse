@@ -223,6 +223,11 @@ def init_processing(data_name: str, assay: str, project_dir: str, analysis_name:
     data.uns['n_unique'] = kb_run_info['n_unique']
     data.uns['n_raw_counts'] = data.X.sum()
 
+    with open(Path.joinpath(kb_dir, "inspect.json"), 'r') as f:
+        kb_inspect = json.load(f)
+    data.uns["kb_PCBCOnlist"] = kb_inspect['percentageBarcodesOnOnlist']
+    data.uns["kb_PCReadsOnlist"] = kb_inspect['percentageReadsOnOnlist']
+
     with open(Path.joinpath(star_dir, f"{data_name}_Log.final.out"), 'r') as f:
         star_dict = {}
         for line in f:
